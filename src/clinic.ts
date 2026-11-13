@@ -36,6 +36,13 @@ export type RecordItem = {
   uri?: string;
   mime?: string;
   fileId?: string;
+  provenance?: {
+    source: string;
+    authorId: string;
+    createdAt: string;
+    version: number;
+    updatedAt?: string;
+  };
 };
 export type Consultation = {
   id: string;

@@ -2,7 +2,7 @@
   "expo": {
     "name": "BLOOM MED",
     "slug": "bloom-med",
-    "version": "1.0.0",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/bloom-logo-v2.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,8 @@
       },
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "resize",
-      "package": "com.noorailabs.bloommed"
+      "package": "com.noorailabs.bloommed",
+      "versionCode": 9
     },
     "web": {
       "favicon": "./assets/bloom-logo-v2.png"
@@ -36,7 +37,20 @@
       ],
       "@clerk/expo",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-status-bar",
+      "expo-font",
+      "expo-notifications",
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "# WebRTC 150 carries an unused custom-class-loader JNI bridge reference.\n# No blanket dontwarn: preserve R8 checks for every other missing class.\n-dontwarn livekit.org.jni_zero.JniZeroJni"
+          }
+        }
+      ]
     ],
     "scheme": "bloommed",
     "extra": {

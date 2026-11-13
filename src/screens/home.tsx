@@ -1,16 +1,11 @@
+import { providers, providerFor } from "../provider-display";
+import { DoctorHome } from "./doctor";
 import React from "react";
 import { Text, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
 import { BloomLogo } from "../branding";
-import {
-  canRead,
-  dayKey,
-  formatDate,
-  providers,
-  providerFor,
-  visibleVisits,
-} from "../clinic";
+import { canRead, dayKey, formatDate, visibleVisits } from "../clinic";
 import {
   Avatar,
   Body,
@@ -74,6 +69,14 @@ export function VisitCard({
   );
 }
 export default function HomeScreen() {
+  const { state } = useClinic();
+  return state.session?.role === "Doctor" ? (
+    <DoctorHome />
+  ) : (
+    <GeneralHomeScreen />
+  );
+}
+function GeneralHomeScreen() {
   const { state } = useClinic();
   const role = state.session?.role || "Patient";
   const personal = ["Patient", "Family"].includes(role);
@@ -455,7 +458,7 @@ export default function HomeScreen() {
       )}
       <Body muted>
         {state.session?.identifier.startsWith("user_")
-          ? "Cloud care space · Provider directory and assistant are demonstration features."
+          ? "Private cloud care space"
           : "Local functional demo · All care data is fictional."}
       </Body>
     </Screen>

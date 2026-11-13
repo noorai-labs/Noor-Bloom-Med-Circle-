@@ -1,3 +1,4 @@
+import { providers } from "./provider-display";
 import React, {
   createContext,
   useCallback,
@@ -29,7 +30,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import { canRead, providers, Role } from "./clinic";
+import { canRead, Role } from "./clinic";
 import { useClinic } from "./store";
 import { StartupLoader } from "./branding";
 export const theme = {
@@ -53,7 +54,9 @@ export function Icon({
   color?: ColorValue;
   size?: number;
 }) {
-  return <Ionicons name={name} size={size} color={color} />;
+  return (
+    <Ionicons name={name} size={size} style={{ color: color ?? theme.green }} />
+  );
 }
 export function useReducedMotion() {
   const [reduced, setReduced] = useState(true);
@@ -67,9 +70,9 @@ export function useReducedMotion() {
   }, []);
   return reduced;
 }
-const FocusedFieldContext = createContext<(field: TextInput | null) => void>(
-  () => {},
-);
+const FocusedFieldContext = createContext<
+  (field: React.ComponentRef<typeof TextInput> | null) => void
+>(() => {});
 export function useKeyboardOpen() {
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -355,7 +358,7 @@ export function Field({
   error?: string;
 }) {
   const [focus, setFocus] = useState(false);
-  const input = useRef<TextInput>(null);
+  const input = useRef<React.ComponentRef<typeof TextInput>>(null);
   const reveal = useContext(FocusedFieldContext);
   return (
     <View style={{ gap: 8, width: "100%", minWidth: 0 }}>
@@ -422,7 +425,7 @@ export function Avatar({
       <Text
         style={{ fontSize: size * 0.3, fontWeight: "700", color: theme.ink }}
       >
-        {p?.initials || "AS"}
+        {p?.initials || <Icon name="person-outline" size={size * 0.4} />}
       </Text>
     </View>
   );
@@ -571,9 +574,9 @@ export function Screen({
   maxWidth?: number;
 }) {
   const { state, ready, toast } = useClinic();
-  const scroll = useRef<ScrollView>(null);
-  const viewport = useRef<View>(null);
-  const focused = useRef<TextInput | null>(null);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const viewport = useRef<React.ComponentRef<typeof View>>(null);
+  const focused = useRef<React.ComponentRef<typeof TextInput> | null>(null);
   const offset = useRef(0);
   const keyboardTop = useRef<number | null>(null);
   const retry = useRef<ReturnType<typeof setTimeout> | null>(null);

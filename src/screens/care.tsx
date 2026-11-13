@@ -1,15 +1,14 @@
+import { cloudMode } from "../cloud-config";
+import { doctors, nurses, providers, providerFor } from "../provider-display";
+import { DoctorAppointments } from "./doctor";
 import React, { useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useClinic } from "../store";
 import {
-  doctors,
   formatDate,
   nextDays,
-  nurses,
   nursing,
-  providerFor,
-  providers,
   terminal,
   times,
   visibleVisits,
@@ -78,7 +77,11 @@ export function DiscoverScreen() {
           onChange={setSpecialty}
         />
       )}
-      <Body muted>{list.length} professionals available in this demo</Body>
+      <Body muted>
+        {cloudMode
+          ? "Only verified professionals will appear here."
+          : list.length + " professionals available in this demo"}
+      </Body>
       {list.map((p) => (
         <Touch
           key={p.id}
@@ -554,6 +557,14 @@ export function BookingScreen() {
 }
 export function AppointmentsScreen() {
   const { state } = useClinic();
+  return state.session?.role === "Doctor" ? (
+    <DoctorAppointments />
+  ) : (
+    <GeneralAppointmentsScreen />
+  );
+}
+function GeneralAppointmentsScreen() {
+  const { state } = useClinic();
   const [filter, setFilter] = useState("Upcoming");
   const list = visibleVisits(state).filter(
     (v) =>
@@ -627,13 +638,22 @@ export function VisitScreen() {
   const progress = ["Requested", "Confirmed", "In Progress", "Completed"];
   const current = progress.indexOf(v.status);
   return (
-    <Screen title="Your care moment" back>
+    <Screen
+      title={role === "Doctor" ? "Consultation details" : "Your care moment"}
+      back
+    >
       <Card>
         <View style={styles.row}>
           <Avatar providerId={p.id} size={64} />
           <View style={{ flex: 1 }}>
-            <Title small>{p.name}</Title>
-            <Body muted>{p.specialty}</Body>
+            <Title small>
+              {role === "Doctor" ? state.profile.name : p.name}
+            </Title>
+            <Body muted>
+              {role === "Doctor"
+                ? "Patient - " + state.profile.age + " years"
+                : p.specialty}
+            </Body>
             <Chip title={v.status} />
           </View>
         </View>
@@ -655,11 +675,25 @@ export function VisitScreen() {
           />
           <Body>
             {v.service === "Online Consultation"
-              ? "Online consultation demo · No video call connected"
+              ? "Private audio / video consultation"
               : v.address}
           </Body>
         </View>
       </Card>
+      {v.service === "Online Consultation" &&
+        ["Patient", "Doctor"].includes(role) &&
+        ["Confirmed", "In Progress"].includes(v.status) && (
+          <Button
+            title="Join online consultation"
+            icon="videocam-outline"
+            onPress={() =>
+              router.push({
+                pathname: "/consultation-call",
+                params: { visitId: v.id },
+              })
+            }
+          />
+        )}
       {v.status !== "Cancelled" && (
         <Card>
           <Title small>Your care journey</Title>

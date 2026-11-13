@@ -15,7 +15,24 @@ import {
 } from "./clinic";
 const KEY = "bloom-med-clinic-v2";
 export type CloudControls = {
+  calls: {
+    join: (visitId: string) => Promise<import("./call-types").CallCredentials>;
+    status: (visitId: string) => Promise<{ allowed: boolean; endsAt: number }>;
+    leave: (visitId: string) => Promise<void>;
+  };
+  verification: {
+    request: <T>(path: string, body?: unknown) => Promise<T>;
+    upload: (asset: {
+      uri: string;
+      name: string;
+      mimeType?: string;
+      file?: globalThis.File;
+    }) => Promise<{ id: string; name: string; mime: string }>;
+    download: (id: string) => Promise<string>;
+  };
+  reminders: import("./cloud-reminders").CloudReminderControls;
   status: string;
+  recordsAccessible: boolean;
   error: string;
   spaces: import("./cloud-api").CareSpace[];
   spaceId: string;
@@ -29,6 +46,24 @@ export type CloudControls = {
     file?: globalThis.File;
   }) => Promise<{ fileId: string; mime: string }>;
   download: (fileId: string) => Promise<string>;
+  recordAccess: () => Promise<
+    { userId: string; role: string; granted: number }[]
+  >;
+  setRecordAccess: (userId: string, granted: boolean) => Promise<void>;
+  amendRecord: (
+    recordId: string,
+    detail: string,
+    reason: string,
+  ) => Promise<void>;
+  recordHistory: (recordId: string) => Promise<
+    {
+      version: number;
+      metadata: string;
+      actorId: string;
+      reason: string;
+      createdAt: string;
+    }[]
+  >;
 };
 export type Store = {
   state: ClinicState;

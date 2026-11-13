@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 16.0.0"
+    "version": ">= 16.0.0",
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -24,7 +25,8 @@
         "EXPO_PUBLIC_APP_MODE": "cloud",
         "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY": "pk_test_cmVzdGVkLXRvcnRvaXNlLTg3NTYuY2xlcmsuYWNjb3VudHMuZGV2JA",
         "EXPO_PUBLIC_API_URL": "https://bloom-med-api.ancdominater.workers.dev"
-      }
+      },
+      "environment": "preview"
     }
   }
 }

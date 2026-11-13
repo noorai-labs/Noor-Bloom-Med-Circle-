@@ -38,6 +38,8 @@ yarn-error.*
 .env*.local
 .env
 .dev.vars
+google-services.json
+*firebase-adminsdk*.json
 .wrangler/
 
 # typescript
@@ -50,3 +52,7 @@ yarn-error.*
 build-login-fixed/
 
 build-auth-native/
+tmp/
+# Local development QR images are regenerated per Metro session.
+/assets/expo-development-qr.png
+/assets/expo-go-sdk58-qr.png

@@ -1,15 +1,10 @@
+import { cloudMode } from "../cloud-config";
+import { doctors, nurses, providers } from "../provider-display";
 import React, { useState } from "react";
 import { Switch, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
-import {
-  doctors,
-  nurses,
-  providers,
-  Role,
-  roles,
-  visibleVisits,
-} from "../clinic";
+import { Role, roles, visibleVisits } from "../clinic";
 import {
   Avatar,
   Body,
@@ -75,7 +70,12 @@ export function ProfileScreen() {
                 (s) =>
                   s.name + " · " + s.role + " · " + s.id.slice(-6) === label,
               );
-              if (space) void cloud.select(space.id);
+              if (space)
+                void cloud
+                  .select(space.id)
+                  .catch(() =>
+                    notify("Could not open this care space. Please try again."),
+                  );
             }}
           />
         </Card>
@@ -84,7 +84,14 @@ export function ProfileScreen() {
         <View style={styles.row}>
           <Avatar providerId={professional?.id} size={70} />
           <View style={{ flex: 1 }}>
-            <Title small>{professional?.name || state.profile.name}</Title>
+            <Title small>
+              {professional?.name ||
+                (role === "Doctor"
+                  ? "Doctor workspace"
+                  : role === "Nurse"
+                    ? "Nurse workspace"
+                    : state.profile.name)}
+            </Title>
             <Body muted>
               {state.session?.identifier || "Local demo account"}
             </Body>
@@ -100,6 +107,20 @@ export function ProfileScreen() {
           />
         )}
       </Card>
+      {cloud && (
+        <Card>
+          <Title small>Identity & professional verification</Title>
+          <Body muted>
+            Submit evidence, track manual review and respond to requests for
+            corrections.
+          </Body>
+          <Button
+            title="Open verification"
+            icon="shield-checkmark-outline"
+            onPress={() => router.push("/verification")}
+          />
+        </Card>
+      )}
       {role === "Patient" && (
         <Card>
           <View style={styles.row}>
@@ -190,13 +211,17 @@ export function ProfileScreen() {
       </Card>
       <Body muted>
         {cloud
-          ? "Google authentication and private cloud storage. The provider directory is still fictional; assistant and emergency features are simulated."
+          ? "Email or Google sign-in and private cloud storage. Provider discovery will show verified profiles when connected. Assistant and emergency dispatch are not connected."
           : "Local prototype · No real authentication, cloud syncing, medical AI or emergency services. Keep real health information out of this demo."}
       </Body>
       <Confirm
         visible={logout}
         title="Leave your care space?"
-        body="Your demo visits, records and care updates stay saved on this device."
+        body={
+          cloud
+            ? "Your care data stays in your account. Sign back in with the same email or Google account to access it."
+            : "Your demo visits, records and care updates stay saved on this device."
+        }
         confirm="Sign out"
         onClose={() => setLogout(false)}
         onConfirm={() => {
@@ -256,7 +281,9 @@ export function InboxScreen() {
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Title small>{n.title}</Title>
+                <Title small>
+                  {cloudMode && n.visitId ? "Appointment update" : n.title}
+                </Title>
                 <Body muted>
                   {new Date(n.date).toLocaleString("en-IN", {
                     month: "short",
@@ -277,7 +304,22 @@ export function InboxScreen() {
                 />
               )}
             </View>
-            <Body>{n.body}</Body>
+            <Body>
+              {cloudMode && n.visitId
+                ? (() => {
+                    const visit = state.visits.find((v) => v.id === n.visitId);
+                    return visit
+                      ? visit.service +
+                          " - " +
+                          visit.date +
+                          " " +
+                          visit.time +
+                          " - " +
+                          visit.status
+                      : "Open this appointment to view its details.";
+                  })()
+                : n.body}
+            </Body>
           </Card>
         </Touch>
       ))}
@@ -384,6 +426,21 @@ export function AdminScreen() {
   );
 }
 export function SosScreen() {
+  if (cloudMode)
+    return (
+      <Screen title="Emergency support" back>
+        <Card>
+          <Title small>Emergency dispatch is not connected</Title>
+          <Body>
+            BLOOM MED cannot request an ambulance or notify emergency contacts.
+            Contact local emergency services directly for urgent help.
+          </Body>
+        </Card>
+      </Screen>
+    );
+  return <DemoSosScreen />;
+}
+function DemoSosScreen() {
   const { state, dispatch } = useClinic();
   const [confirm, setConfirm] = useState(false);
   return (

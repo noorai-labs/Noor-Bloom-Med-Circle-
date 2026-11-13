@@ -8,6 +8,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ClinicProvider, useClinic } from "../store";
+import { MedicineReminderProvider } from "../medicine-reminders";
 import { StartupLoader } from "../branding";
 import { theme, useReducedMotion } from "../components";
 export default function RootLayout() {
@@ -68,27 +69,29 @@ function AppNavigation() {
     return () => fade.stop();
   }, [loading, opacity, reduced]);
   return (
-    <View style={{ flex: 1 }}>
-      <StatusBar style="dark" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          animation: "slide_from_right",
-          contentStyle: { backgroundColor: theme.bg },
-        }}
-      >
-        <Stack.Screen name="index" />
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen
-          name="sos"
-          options={{ presentation: "modal", animation: "slide_from_bottom" }}
-        />
-      </Stack>
-      {!dismissed && (
-        <Animated.View style={{ position: "absolute", inset: 0, opacity }}>
-          <StartupLoader />
-        </Animated.View>
-      )}
-    </View>
+    <MedicineReminderProvider>
+      <View style={{ flex: 1 }}>
+        <StatusBar style="dark" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            animation: "slide_from_right",
+            contentStyle: { backgroundColor: theme.bg },
+          }}
+        >
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="sos"
+            options={{ presentation: "modal", animation: "slide_from_bottom" }}
+          />
+        </Stack>
+        {!dismissed && (
+          <Animated.View style={{ position: "absolute", inset: 0, opacity }}>
+            <StartupLoader />
+          </Animated.View>
+        )}
+      </View>
+    </MedicineReminderProvider>
   );
 }
