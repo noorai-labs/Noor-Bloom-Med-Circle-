@@ -18,7 +18,7 @@ The server setting is independent of workflow files. Required status checks are 
 
 ## One-time Expo secret
 
-1. Sign in to the Expo account with access to `@dominateranc/bloom-med`.
+1. Sign in to the Expo account with access to `@dominateranc/bloom-med`. For CI, create a robot user with Developer access and use its token rather than an unrestricted personal token.
 2. Open https://expo.dev/accounts/dominateranc/settings/access-tokens and create an access token for CI. Keep it out of chat/source code.
 3. Open https://github.com/noorai-labs/Noor-Bloom-Med-Circle-/settings/secrets/actions and choose New repository secret.
 4. Name: `EXPO_TOKEN`. Value: the Expo token. Save it.
@@ -36,4 +36,4 @@ CodeRabbit is installed and has emitted its CodeRabbit check on this repository.
 
 GitGuardian is installed and its GitGuardian Security Checks check passed on the setup PR. Use its free Starter workspace and connect GitHub from workspace Integrations (https://github.com/apps/gitguardian). Select only this repository. App installation must be authorized by an organization owner; no repository file can install the app. Its actual check name and app identity have been observed and made required. Do not configure nonexistent checks that permanently block every PR.
 
-The repository's GitHub-native secret scanning, push protection and Dependabot security updates are enabled on this public repository. Weekly dependency update configuration targets dev. No paid plan or trial is required for this setup. Never commit Expo, Clerk secret, R2, SSH or Firebase service-account keys.
+The repository's GitHub-native secret scanning, push protection and Dependabot security updates are enabled on this public repository. Weekly dependency update PRs target dev, but GitHub reads dependabot.yml from the default branch main. Promote this configuration to main through a reviewed follow-up PR before expecting weekly scheduled updates. Merging this setup into dev alone does not activate that schedule; the separately enabled Dependabot security-update setting is already active. No paid plan or trial is required for this setup. Never commit Expo, Clerk secret, R2, SSH or Firebase service-account keys.
