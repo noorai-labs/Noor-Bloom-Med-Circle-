@@ -13,6 +13,10 @@
       {
         "context": "GitGuardian Security Checks",
         "app_id": 46505
+      },
+      {
+        "context": "Dependency Review",
+        "app_id": 15368
       }
     ]
   },
