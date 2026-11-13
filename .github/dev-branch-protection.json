@@ -1,5 +1,21 @@
 {
-  "required_status_checks": { "strict": true, "contexts": ["Validate"] },
+  "required_status_checks": {
+    "strict": true,
+    "checks": [
+      {
+        "context": "Validate",
+        "app_id": 15368
+      },
+      {
+        "context": "CodeRabbit",
+        "app_id": 347564
+      },
+      {
+        "context": "GitGuardian Security Checks",
+        "app_id": 46505
+      }
+    ]
+  },
   "enforce_admins": true,
   "required_pull_request_reviews": {
     "dismiss_stale_reviews": true,

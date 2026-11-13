@@ -6,7 +6,7 @@ Repository: https://github.com/noorai-labs/Noor-Bloom-Med-Circle-
 
 `dev` is protected in GitHub settings: one approving review, stale approvals dismissed, latest push approved by someone else, conversations resolved, administrators included, no force pushes and no branch deletion. Direct pushes are blocked. PR authors cannot approve their own PR. The organization repository is public so these protections work on GitHub Free.
 
-The server setting is independent of workflow files. Once the first `PR checks` run exists, configure `Validate` as a required status check with the branch required to be up to date. The prepared `.github/dev-branch-protection.json` contains that full setting for repeatable administration. Applying it requires repository administration permission.
+The server setting is independent of workflow files. Required status checks are active: Validate (GitHub Actions app 15368), CodeRabbit (app 347564), and GitGuardian Security Checks (app 46505), with the branch required to be up to date. Checks are bound to their actual GitHub App identities. `.github/dev-branch-protection.json` records the active setting for repeatable administration. Applying it requires repository administration permission.
 
 ## Workflow behavior
 
@@ -32,8 +32,8 @@ Official references: https://docs.expo.dev/build/building-on-ci/ and https://doc
 
 ## Free code review and security tools
 
-CodeRabbit: install https://github.com/apps/coderabbitai for noorai-labs, only Noor-Bloom-Med-Circle-. Public-repository reviews qualify for the free open-source plan. `.coderabbit.yaml` enables incremental review of dev/qa PRs and reports review errors as failures. CodeRabbit completion is not a substitute for independent human approval and can finish successfully when skipped/rate-limited.
+CodeRabbit is installed and has emitted its CodeRabbit check on this repository. Installation: https://github.com/apps/coderabbitai for noorai-labs, only Noor-Bloom-Med-Circle-. Public-repository reviews qualify for the free open-source plan. `.coderabbit.yaml` enables incremental review of dev/qa PRs and reports review errors as failures. CodeRabbit completion is not a substitute for independent human approval and can finish successfully when skipped/rate-limited.
 
-GitGuardian: use its free Starter workspace and connect GitHub from workspace Integrations (https://github.com/apps/gitguardian). Select only this repository. App installation must be authorized by an organization owner; no repository file can install the app. Its real check name/app identity must be observed on a PR before making that check required. Do not configure a nonexistent check that permanently blocks every PR.
+GitGuardian is installed and its GitGuardian Security Checks check passed on the setup PR. Use its free Starter workspace and connect GitHub from workspace Integrations (https://github.com/apps/gitguardian). Select only this repository. App installation must be authorized by an organization owner; no repository file can install the app. Its actual check name and app identity have been observed and made required. Do not configure nonexistent checks that permanently block every PR.
 
-The repository's GitHub-native secret scanning, push protection and Dependabot security updates can be enabled free on this public repository. Weekly dependency update configuration targets dev. No paid plan or trial is required for this setup. Never commit Expo, Clerk secret, R2, SSH or Firebase service-account keys.
+The repository's GitHub-native secret scanning, push protection and Dependabot security updates are enabled on this public repository. Weekly dependency update configuration targets dev. No paid plan or trial is required for this setup. Never commit Expo, Clerk secret, R2, SSH or Firebase service-account keys.

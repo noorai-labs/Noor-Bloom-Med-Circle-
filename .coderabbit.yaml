@@ -4,6 +4,8 @@ language: en-US
 enable_free_tier: true
 reviews:
   profile: chill
+  auto_approvals:
+    enabled: false
   high_level_summary: true
   review_status: true
   review_progress: true
