@@ -44,3 +44,11 @@ The repository's GitHub-native secret scanning, push protection and Dependabot s
 The intended sole approver is ANC-DOMINATER. `.github/CODEOWNERS` assigns every path to that account, and the server's require-code-owner-reviews flag is enabled. The CODEOWNERS file must merge into base branch dev before GitHub can enforce that identity on subsequent PRs. The Expo guard also requires this exact human account's approval of the latest head; another human or app cannot substitute for it.
 
 GitHub prevents self-approval and approval of your own latest push. Use noorlabs-dev as the contribution account for coding, pushes and PR authorship, and ANC-DOMINATER as the independent approval account. The replacement setup PR is authored and pushed by noorlabs-dev so ANC-DOMINATER can review it. Do not disable protection or reduce approvals as a workaround.
+
+## CodeQL, Dependency Review and Socket
+
+CodeQL default setup is enabled for JavaScript/TypeScript with the extended query suite. Its initial GitHub setup analysis must complete before the first real scan/check is verified. GitHub rejected Actions-language selection because the workflow files have not reached the repository's base branches yet; add workflow analysis after the setup PR is merged and GitHub detects that language. Do not also add an advanced CodeQL workflow while default setup is enabled.
+
+`.github/workflows/dependency-review.yml` scans PRs targeting dev for newly introduced dependencies with known vulnerabilities. It fails for low-severity or higher findings, is not warn-only, and uses read-only repository permissions. It does not automatically approve, merge, change package versions, or prove that unchanged dependencies have no vulnerabilities. ANC-DOMINATER retains human approval.
+
+Socket installation: sign in as the GitHub organization owner ANC-DOMINATER, open https://github.com/apps/socket-security/installations/new, choose noorai-labs, select only Noor-Bloom-Med-Circle-, review permissions, and install on the Free plan. The contribution account noorlabs-dev cannot authorize an organization-wide App installation. Socket's actual installation and PR checks must be verified before declaring it active or adding a required check name.
