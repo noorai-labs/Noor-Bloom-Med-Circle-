@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+version: 2
+language: en-US
+enable_free_tier: true
+reviews:
+  profile: chill
+  auto_approvals:
+    enabled: false
+  high_level_summary: true
+  review_status: true
+  review_progress: true
+  fail_commit_status: true
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - "^dev$"
+      - "^qa$"
