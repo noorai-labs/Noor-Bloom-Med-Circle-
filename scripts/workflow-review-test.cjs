@@ -5,6 +5,7 @@ const workflow = fs.readFileSync(
   "utf8",
 );
 const block = workflow
+  .replace(/\r\n/g, "\n")
   .split("          script: |\n")[1]
   ?.split("  validate:")[0];
 assert.ok(block, "approval guard exists");
@@ -30,7 +31,7 @@ const review = (
 ) => ({ user: { login, type }, state, commit_id });
 async function run({
   pulls = [pr],
-  reviews = [review("reviewer")],
+  reviews = [review("ANC-DOMINATER")],
   permissions = {},
 } = {}) {
   const github = {
@@ -64,34 +65,48 @@ async function run({
 }
 (async () => {
   await run();
-  await assert.rejects(run({ pulls: [] }), /merged into dev/);
-  await assert.rejects(run({ reviews: [review("author")] }), /At least one/);
   await assert.rejects(
-    run({ reviews: [review("reviewer", "APPROVED", "old")] }),
-    /At least one/,
+    run({ reviews: [review("different-admin")] }),
+    /ANC-DOMINATER must/,
+  );
+  await assert.rejects(run({ pulls: [] }), /merged into dev/);
+  await assert.rejects(
+    run({ reviews: [review("author")] }),
+    /ANC-DOMINATER must/,
+  );
+  await assert.rejects(
+    run({ reviews: [review("ANC-DOMINATER", "APPROVED", "old")] }),
+    /ANC-DOMINATER must/,
   );
   await assert.rejects(
     run({ reviews: [review("bot", "APPROVED", "head", "Bot")] }),
-    /At least one/,
+    /ANC-DOMINATER must/,
   );
   await assert.rejects(
-    run({ permissions: { reviewer: "read" } }),
-    /At least one/,
-  );
-  await assert.rejects(
-    run({ reviews: [review("reviewer"), review("reviewer", "DISMISSED")] }),
-    /At least one/,
+    run({ permissions: { "ANC-DOMINATER": "read" } }),
+    /ANC-DOMINATER must/,
   );
   await assert.rejects(
     run({
-      reviews: [review("reviewer"), review("other", "CHANGES_REQUESTED")],
+      reviews: [review("ANC-DOMINATER"), review("ANC-DOMINATER", "DISMISSED")],
+    }),
+    /ANC-DOMINATER must/,
+  );
+  await assert.rejects(
+    run({
+      reviews: [review("ANC-DOMINATER"), review("other", "CHANGES_REQUESTED")],
     }),
     /requests changes/,
   );
   await run({
-    reviews: [review("reviewer", "CHANGES_REQUESTED"), review("reviewer")],
+    reviews: [
+      review("ANC-DOMINATER", "CHANGES_REQUESTED"),
+      review("ANC-DOMINATER"),
+    ],
   });
-  await run({ reviews: [review("reviewer"), review("reviewer", "COMMENTED")] });
+  await run({
+    reviews: [review("ANC-DOMINATER"), review("ANC-DOMINATER", "COMMENTED")],
+  });
   console.log(
     "Passed: merged-PR guard, independent/current approvals, permissions, dismissals and changes-requested blocking.",
   );

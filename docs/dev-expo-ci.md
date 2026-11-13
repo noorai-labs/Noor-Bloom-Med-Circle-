@@ -37,3 +37,10 @@ CodeRabbit is installed and has emitted its CodeRabbit check on this repository.
 GitGuardian is installed and its GitGuardian Security Checks check passed on the setup PR. Use its free Starter workspace and connect GitHub from workspace Integrations (https://github.com/apps/gitguardian). Select only this repository. App installation must be authorized by an organization owner; no repository file can install the app. Its actual check name and app identity have been observed and made required. Do not configure nonexistent checks that permanently block every PR.
 
 The repository's GitHub-native secret scanning, push protection and Dependabot security updates are enabled on this public repository. Weekly dependency update PRs target dev, but GitHub reads dependabot.yml from the default branch main. Promote this configuration to main through a reviewed follow-up PR before expecting weekly scheduled updates. Merging this setup into dev alone does not activate that schedule; the separately enabled Dependabot security-update setting is already active. No paid plan or trial is required for this setup. Never commit Expo, Clerk secret, R2, SSH or Firebase service-account keys.
+
+
+## Sole approver
+
+The intended sole approver is ANC-DOMINATER. `.github/CODEOWNERS` assigns every path to that account, and the server's require-code-owner-reviews flag is enabled. The CODEOWNERS file must merge into base branch dev before GitHub can enforce that identity on subsequent PRs. The Expo guard also requires this exact human account's approval of the latest head; another human or app cannot substitute for it.
+
+GitHub prevents self-approval. The current setup PR was authored and pushed by ANC-DOMINATER, so that account cannot approve it or its own latest push. With only this account allowed to approve, a different contributor account must author and push the setup changes, then ANC-DOMINATER can review that replacement PR. Do not disable protection or reduce approvals as a workaround. Use a separate contributor identity for future coding/pushes and ANC-DOMINATER for approvals.
