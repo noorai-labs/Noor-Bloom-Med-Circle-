@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const workflow = fs.readFileSync(
-  ".github/workflows/dev-expo-build.yml",
+  process.argv[2] || ".github/workflows/dev-expo-build.yml",
   "utf8",
 );
 const block = workflow
@@ -17,7 +17,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const execute = new AsyncFunction("github", "context", "core", source);
 const pr = {
   number: 1,
-  base: { ref: "dev" },
+  base: { ref: process.argv[3] || "dev" },
   merged_at: "2026-11-13",
   merge_commit_sha: "merge",
   head: { sha: "head" },
@@ -59,7 +59,7 @@ async function run({
   };
   return execute(
     github,
-    { repo: { owner: "test", repo: "test" }, sha: "merge" },
+    { repo: { owner: "test", repo: "test" }, sha: "merge", ref: "refs/heads/" + (process.argv[3] || "dev") },
     { summary },
   );
 }

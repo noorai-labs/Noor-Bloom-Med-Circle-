@@ -1,0 +1,94 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "account_id": "5f60fb51e83a434162045c3ba7049f9a",
+  "name": "bloom-med-nonprod",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "migrations": [
+    {
+      "tag": "v1-reminders",
+      "new_sqlite_classes": [
+        "MedicineReminderScheduler"
+      ]
+    }
+  ],
+  "env": {
+    "dev": {
+      "name": "bloom-med-api-dev",
+      "workers_dev": true,
+      "triggers": {
+        "crons": [
+          "0 3 * * *",
+          "* * * * *"
+        ]
+      },
+      "vars": {
+        "CLERK_ISSUER": "https://rested-tortoise-8756.clerk.accounts.dev",
+        "ALLOWED_ORIGINS": "",
+        "AUTHORIZED_PARTIES": ""
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "REMINDERS",
+            "class_name": "MedicineReminderScheduler"
+          }
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "bloom-med-records-dev"
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bloom-med-dev",
+          "database_id": "76610c38-39c1-4931-a16c-ec440465eea7",
+          "migrations_dir": "migrations"
+        }
+      ]
+    },
+    "qa": {
+      "name": "bloom-med-api-qa",
+      "workers_dev": true,
+      "triggers": {
+        "crons": [
+          "0 3 * * *",
+          "* * * * *"
+        ]
+      },
+      "vars": {
+        "CLERK_ISSUER": "https://rested-tortoise-8756.clerk.accounts.dev",
+        "ALLOWED_ORIGINS": "",
+        "AUTHORIZED_PARTIES": ""
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "REMINDERS",
+            "class_name": "MedicineReminderScheduler"
+          }
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "FILES",
+          "bucket_name": "bloom-med-records-qa"
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "bloom-med-qa",
+          "database_id": "c6a2c416-941e-4652-bdf9-2209bdf63f64",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
+}
