@@ -1,10 +1,11 @@
+import { fileKey } from "./storage";
 import type {
   VerificationApplication,
   VerificationDetails,
   VerificationKind,
 } from "../src/verification-types";
 import { verificationDay } from "../src/verification-types";
-type Env = { DB: D1Database; FILES: R2Bucket };
+type Env = { DB: D1Database; FILES: R2Bucket; FILES_PREFIX?: string };
 type Row = {
   id: string;
   user_id: string;
@@ -128,7 +129,7 @@ export async function verificationRoute(
       .bind(id, user, name, mime, bytes.length)
       .run();
     try {
-      await env.FILES.put("verification/" + id, bytes, {
+      await env.FILES.put(fileKey(env, "verification/" + id), bytes, {
         httpMetadata: { contentType: mime },
       });
       await env.DB.prepare(
@@ -137,7 +138,7 @@ export async function verificationRoute(
         .bind(id)
         .run();
     } catch (e) {
-      await env.FILES.delete("verification/" + id);
+      await env.FILES.delete(fileKey(env, "verification/" + id));
       await env.DB.prepare("DELETE FROM verification_documents WHERE id=?")
         .bind(id)
         .run();
@@ -161,7 +162,7 @@ export async function verificationRoute(
         403,
         "Only your unused evidence can be removed. Submitted evidence is retained for review history.",
       );
-    await env.FILES.delete("verification/" + id);
+    await env.FILES.delete(fileKey(env, "verification/" + id));
     await env.DB.prepare(
       "DELETE FROM verification_documents WHERE id=? AND ready=0",
     )
@@ -186,7 +187,7 @@ export async function verificationRoute(
       .first();
     if (doc!.user_id !== user && !(linked && (await reviewer(env, user))))
       fail(403, "Document access is restricted.");
-    const object = await env.FILES.get("verification/" + doc!.id);
+    const object = await env.FILES.get(fileKey(env, "verification/" + doc!.id));
     if (!object) fail(404, "Document not found.");
     await env.DB.prepare(
       "INSERT INTO security_audit(actor_id,action,target_id) VALUES (?,'verification.document.read',?)",
@@ -421,7 +422,7 @@ export async function cleanupVerificationEvidence(env: Env) {
       .bind(row.id)
       .run();
     if (!lock.meta.changes) continue;
-    await env.FILES.delete("verification/" + row.id);
+    await env.FILES.delete(fileKey(env, "verification/" + row.id));
     await env.DB.prepare(
       "DELETE FROM verification_documents WHERE id=? AND ready=0",
     )

@@ -112,6 +112,7 @@ const mf = new Miniflare(
         bindings: {
           CLERK_JWT_KEY: publicKey.export({ type: "spki", format: "pem" }),
           CLERK_ISSUER: issuer,
+          FILES_PREFIX: "main/",
           ALLOWED_ORIGINS: "http://localhost:8083",
           AUTHORIZED_PARTIES: "bloommed://",
           LIVEKIT_URL: "wss://livekit.test",
@@ -288,6 +289,13 @@ async function main() {
     "application/pdf",
   );
   assert.equal(upload.status, 200, JSON.stringify(upload.data));
+  const storedFiles = await mf.getR2Bucket("FILES");
+  const uploadedKey = space + "/" + upload.data.fileId;
+  assert.ok(await storedFiles.head("main/" + uploadedKey));
+  assert.equal(await storedFiles.head(uploadedKey), null);
+  assert.equal(await storedFiles.head("dev/" + uploadedKey), null);
+  assert.equal(await storedFiles.head("qa/" + uploadedKey), null);
+
   state = await mutate("user_patient", {
     type: "record",
     record: {
