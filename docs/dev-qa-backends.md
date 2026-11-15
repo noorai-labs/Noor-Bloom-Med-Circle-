@@ -5,8 +5,8 @@ Production configuration stays in `backend/wrangler.jsonc`; nonproduction uses `
 
 | Branch | Worker | D1 | Private R2 bucket |
 | --- | --- | --- | --- |
-| dev | bloom-med-api-dev | bloom-med-dev | bloom-med-records-dev |
-| qa | bloom-med-api-qa | bloom-med-qa | bloom-med-records-qa |
+| dev | bloom-med-api-dev | bloom-med-dev | bloom-med-storage / dev/ |
+| qa | bloom-med-api-qa | bloom-med-qa | bloom-med-storage / qa/ |
 
 Only approved PR merges deploy. ANC-DOMINATER must approve the latest head; validation passes before migrations and deployment. Promote dev to qa with a reviewed PR. This workflow does not change the mobile app API URL or deploy production.
 
@@ -20,8 +20,10 @@ Workers/D1 Free allowances are shared across the account. R2 can charge beyond t
 
 ## Provisioning status
 
-Both D1 databases are created and migrations 0001–0005 are applied. R2 activation in the development account is pending the owner's payment setup. Buckets, Worker deployments and Worker JWT bindings are not configured yet. No production data was copied.
+Dev and QA databases, Workers and Clerk public JWT bindings are deployed. Health checks return 200 and unauthenticated state requests return 401. All files use the one private `bloom-med-storage` bucket with server-controlled `dev/`, `qa/` and `main/` prefixes. Branding is served through an exact Worker logo route. R2 is enabled and the temporary separate buckets were removed after verification.
 
-After enabling R2, create both named private buckets, deploy each environment and set its Clerk JWT public PEM key. Set the account's workers.dev subdomain if Cloudflare requests it. Smoke-test `/health` and authenticated access before distributing API URLs.
+PR #5 supplies the storage prefix helper and migrated main-backend configuration. Merge or incorporate PR #5 before activating this deployment workflow. This branch must be up to date with dev before merging. The GitHub Cloudflare CI token and environment restrictions still require setup.
 
-The CI deployment workflow is prepared but must land through review in the target branches. Its Cloudflare token and GitHub environments still need configuration. QA branch protection is active with the same required checks and review rules as dev, recorded in `.github/qa-branch-protection.json`. The current qa branch predates the workflow/CODEOWNERS setup. Promote those files through an owner-reviewed PR before expecting the sole code-owner identity rule to take effect. PR #3 extends Validate and Dependency Review triggers to qa. A promotion PR must include those workflow changes so required checks can run.
+The main data migration is a snapshot with 18 verified tables and checksum-verified record/branding files. Old installed apps still use the original endpoint. Follow the controlled cutover notes in `docs/cloudflare-account-migration.md`; dev and qa do not contain copied patient data.
+
+QA branch protection is active with the same required checks and review rules as dev. Promote workflows and CODEOWNERS through owner-reviewed PRs so the checks run and the sole approver identity is enforced in qa.

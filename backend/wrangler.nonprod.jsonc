@@ -28,7 +28,8 @@
       "vars": {
         "CLERK_ISSUER": "https://rested-tortoise-8756.clerk.accounts.dev",
         "ALLOWED_ORIGINS": "",
-        "AUTHORIZED_PARTIES": ""
+        "AUTHORIZED_PARTIES": "",
+        "FILES_PREFIX": "dev/"
       },
       "durable_objects": {
         "bindings": [
@@ -41,7 +42,7 @@
       "r2_buckets": [
         {
           "binding": "FILES",
-          "bucket_name": "bloom-med-records-dev"
+          "bucket_name": "bloom-med-storage"
         }
       ],
       "d1_databases": [
@@ -65,7 +66,8 @@
       "vars": {
         "CLERK_ISSUER": "https://rested-tortoise-8756.clerk.accounts.dev",
         "ALLOWED_ORIGINS": "",
-        "AUTHORIZED_PARTIES": ""
+        "AUTHORIZED_PARTIES": "",
+        "FILES_PREFIX": "qa/"
       },
       "durable_objects": {
         "bindings": [
@@ -78,7 +80,7 @@
       "r2_buckets": [
         {
           "binding": "FILES",
-          "bucket_name": "bloom-med-records-qa"
+          "bucket_name": "bloom-med-storage"
         }
       ],
       "d1_databases": [
