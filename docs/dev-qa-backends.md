@@ -10,7 +10,7 @@ Production configuration stays in `backend/wrangler.jsonc`; nonproduction uses `
 
 Only approved PR merges deploy. ANC-DOMINATER must approve the latest head; validation passes before migrations and deployment. Promote dev to qa with a reviewed PR. This workflow does not change the mobile app API URL or deploy production.
 
-Create GitHub environments `dev` and `qa`, restrict each to its matching branch, and add `CLOUDFLARE_API_TOKEN` to each. Use a dedicated token for the development Cloudflare account with Workers Scripts Edit, D1 Edit and the permissions required to deploy R2 and Durable Object bindings. R2 buckets must already exist. Do not store Wrangler OAuth credentials in GitHub. Interns do not need deployment tokens.
+Create GitHub environments `dev` and `qa`, restrict each to its matching branch, and add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as environment secrets to each. The workflow reads both from the matching environment; the account ID must match the destination account in the Wrangler configuration. Use a dedicated token for the development Cloudflare account with Workers Scripts Edit, D1 Edit and the permissions required to deploy R2 and Durable Object bindings. R2 buckets must already exist. Do not store Wrangler OAuth credentials in GitHub. Interns do not need deployment tokens.
 
 Each Worker needs its own `CLERK_JWT_KEY` public PEM verification key (the existing development Clerk instance can be shared). Configure independent LiveKit credentials and optional push credentials separately before testing those integrations; production secrets are not copied automatically.
 
