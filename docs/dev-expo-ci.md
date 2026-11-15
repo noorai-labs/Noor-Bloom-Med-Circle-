@@ -56,8 +56,23 @@ Socket is installed in noorai-labs with selected-repository access. To manage it
 
 ## Expo project transfer
 
-The existing bloom-med project now belongs to `devnoorlabss-team`. The EAS project ID stays `1b8258b4-1911-4985-9e16-c82f99c01128`. Update the app owner and CI dashboard links together. Do not initialize a replacement project.
+The existing bloom-med project now belongs to `devnoorlabss-team`. The EAS project ID stays `1b8258b4-1911-4985-9e16-c82f99c01128`. Set the EXPO_OWNER and EXPO_PROJECT_ID Actions secrets as described below. Do not initialize a replacement project.
 
 The owner must replace GitHub's `EXPO_TOKEN` with a token that can access the destination team, preferably a Developer robot user belonging to that team. Keep the value out of chat and Git. An old team-specific robot token does not automatically gain access to the new team. Personal tokens depend on current membership and scope.
 
 Check the destination preview environment for `GOOGLE_SERVICES_JSON`, other required secret variables, and Android signing/FCM credentials. Account-level variables may need copying. Do not revoke the previous token until the new integration has passed verification. A successful queued build is not a finished APK.
+
+
+## Expo identity mapping
+
+Repository Actions secrets are the CI source of truth:
+
+| Secret | Purpose |
+| --- | --- |
+| `EXPO_TOKEN` | Authenticate EAS with access to the owning team |
+| `EXPO_OWNER` | Expo account or organization slug |
+| `EXPO_PROJECT_ID` | UUID of the existing linked EAS project |
+
+`app.config.ts` maps owner and project ID from these environment variables; neither is hardcoded in app.json. The workflow validates them, then injects them into the preview profile's environment in the runner's copy of eas.json. That copy travels to the EAS builder so remote config resolves the same identity. This generated change is never committed. The token is never written into eas.json.
+
+The Actions summary derives the dashboard URL from EXPO_OWNER, the app slug and the returned build ID. No separate URL secret is needed. After a transfer, update EXPO_OWNER; retain EXPO_PROJECT_ID when transferring the existing project. Local developers set both identity variables in ignored .env.local before EAS commands. PR validation needs no Expo secrets and does not queue builds.

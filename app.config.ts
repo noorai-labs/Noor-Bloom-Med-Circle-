@@ -12,6 +12,11 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   return {
     ...config,
     ...app.expo,
+    owner: process.env.EXPO_OWNER || undefined,
+    extra: {
+      ...app.expo.extra,
+      eas: { projectId: process.env.EXPO_PROJECT_ID || undefined },
+    },
     android: {
       ...app.expo.android,
       ...(googleServicesFile ? { googleServicesFile } : {}),
