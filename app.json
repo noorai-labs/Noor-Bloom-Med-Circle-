@@ -54,11 +54,7 @@
     ],
     "scheme": "bloommed",
     "extra": {
-      "router": {},
-      "eas": {
-        "projectId": "1b8258b4-1911-4985-9e16-c82f99c01128"
-      }
-    },
-    "owner": "dominateranc"
+      "router": {}
+    }
   }
 }
