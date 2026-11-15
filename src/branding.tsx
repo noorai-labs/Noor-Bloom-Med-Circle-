@@ -10,7 +10,7 @@ import {
 } from "react-native";
 
 export const brandLogoUrl =
-  "https://pub-b3a4fce9843242c59ef266bfd5409265.r2.dev/bloom-med/branding/bloom-logo-v2.png";
+  "https://bloom-med-api.bloom-med.workers.dev/branding/bloom-logo-v2.png";
 export function BloomLogo({ size = 44 }: { size?: number }) {
   const [remoteFailed, setRemoteFailed] = useState(false);
   return (

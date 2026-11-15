@@ -1,3 +1,4 @@
+import { fileKey } from "./storage";
 import { verifyToken } from "@clerk/backend";
 import {
   canRead,
@@ -28,6 +29,7 @@ type Env = ReminderEnv &
   CallEnv & {
     DB: D1Database;
     FILES: R2Bucket;
+    FILES_PREFIX?: string;
     CLERK_JWT_KEY: string;
     CLERK_ISSUER: string;
     ALLOWED_ORIGINS: string;
@@ -245,6 +247,11 @@ async function route(
   const url = new URL(request.url);
   if (url.pathname === "/health" && request.method === "GET")
     return Response.json({ ok: true });
+  if (url.pathname === "/branding/bloom-logo-v2.png" && request.method === "GET") {
+    const logo = await env.FILES.get("branding/bloom-logo-v2.png");
+    if (!logo) return new Response("Not found", { status: 404 });
+    return new Response(logo.body, { headers: { "Content-Type": "image/png" } });
+  }
   const { user, session } = await userId(request, env);
   if (url.pathname.startsWith("/v1/calls/"))
     return callRoute(request, env, user, session);
@@ -655,7 +662,7 @@ async function route(
       if (fileId && !next.records.some((r) => r.fileId === fileId))
         ctx.waitUntil(
           (async () => {
-            await env.FILES.delete(space + "/" + fileId);
+            await env.FILES.delete(fileKey(env, space + "/" + fileId));
             await env.DB.prepare(
               "DELETE FROM attachments WHERE id=? AND space_id=?",
             )
@@ -684,7 +691,7 @@ async function route(
     const name = (url.searchParams.get("name") || "attachment")
       .replace(/[\r\n]/g, "")
       .slice(0, 200);
-    await env.FILES.put(space + "/" + fileId, bytes, {
+    await env.FILES.put(fileKey(env, space + "/" + fileId), bytes, {
       httpMetadata: { contentType: mime },
     });
     try {
@@ -694,7 +701,7 @@ async function route(
         .bind(fileId, space, name, mime, bytes.byteLength)
         .run();
     } catch (e) {
-      await env.FILES.delete(space + "/" + fileId);
+      await env.FILES.delete(fileKey(env, space + "/" + fileId));
       throw e;
     }
     return Response.json({ fileId, name, mime });
@@ -706,7 +713,7 @@ async function route(
     const fileId = fileMatch[1];
     const attached = snapshot.state.records.some((r) => r.fileId === fileId);
     if (!attached) throw new HttpError(404, "Attachment not found.");
-    const object = await env.FILES.get(space + "/" + fileId);
+    const object = await env.FILES.get(fileKey(env, space + "/" + fileId));
     if (!object) throw new HttpError(404, "Attachment not found.");
     await audit(env, user, space, "record.file.read", fileId);
     return new Response(object.body, {
