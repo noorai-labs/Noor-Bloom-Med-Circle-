@@ -56,7 +56,7 @@ Socket is installed in noorai-labs with selected-repository access. To manage it
 
 ## Expo project transfer
 
-The existing bloom-med project now belongs to `devnoorlabss-team`. The existing EAS project ID is retained in the EXPO_PROJECT_ID Actions secret. Set the EXPO_OWNER and EXPO_PROJECT_ID Actions secrets as described below. Do not initialize a replacement project.
+The existing bloom-med project now belongs to `devnoorlabss-team`. The existing EAS project ID is retained in the EXPO_PROJECT_ID Actions secret. Set the EXPO_OWNER Actions repository variable and EXPO_PROJECT_ID Actions secret as described below. Do not initialize a replacement project.
 
 The owner must replace GitHub's `EXPO_TOKEN` with a token that can access the destination team, preferably a Developer robot user belonging to that team. Keep the value out of chat and Git. An old team-specific robot token does not automatically gain access to the new team. Personal tokens depend on current membership and scope.
 
@@ -65,14 +65,34 @@ Check the destination preview environment for `GOOGLE_SERVICES_JSON`, other requ
 
 ## Expo identity mapping
 
-Repository Actions secrets are the CI source of truth:
+Repository Actions settings are the CI source of truth:
 
-| Secret | Purpose |
+| Setting | Purpose |
 | --- | --- |
-| `EXPO_TOKEN` | Authenticate EAS with access to the owning team |
-| `EXPO_OWNER` | Expo account or organization slug |
-| `EXPO_PROJECT_ID` | UUID of the existing linked EAS project |
+| `EXPO_TOKEN` (secret) | Authenticate EAS with access to the owning team |
+| `EXPO_OWNER` (repository variable) | Expo account or organization slug |
+| `EXPO_PROJECT_ID` (secret) | UUID of the existing linked EAS project |
 
 `app.config.ts` maps owner and project ID from these environment variables; neither is hardcoded in app.json. The workflow validates them, then injects them into the preview profile's environment in the runner's copy of eas.json. That copy travels to the EAS builder so remote config resolves the same identity. This generated change is never committed. The token is never written into eas.json.
 
-The Actions summary derives the dashboard URL from EXPO_OWNER, the app slug and the returned build ID. No separate URL secret is needed. After a transfer, update EXPO_OWNER; retain EXPO_PROJECT_ID when transferring the existing project. Local developers set both identity variables in ignored .env.local before EAS commands. PR validation needs no Expo secrets and does not queue builds.
+The Actions summary derives the dashboard URL from EXPO_OWNER, the app slug and the returned build ID. No separate URL secret is needed. After a transfer, update EXPO_OWNER; retain EXPO_PROJECT_ID when transferring the existing project. Local developers must explicitly export both identity variables into the shell before EAS commands. Do not rely on EAS CLI loading .env.local during app-config resolution. PR validation needs no Expo secrets and does not queue builds.
+
+Configure EXPO_OWNER under Settings > Secrets and variables > Actions > Variables > New repository variable. Remove the obsolete EXPO_OWNER secret after creating the variable. Keep EXPO_TOKEN and EXPO_PROJECT_ID under Secrets.
+
+For local EAS commands, substitute the maintainer-provided values and export them first:
+
+PowerShell:
+```powershell
+$env:EXPO_OWNER = "<expo-owner>"
+$env:EXPO_PROJECT_ID = "<existing-project-uuid>"
+npx eas-cli@27.7.2 project:info
+```
+
+Bash:
+```bash
+export EXPO_OWNER="<expo-owner>"
+export EXPO_PROJECT_ID="<existing-project-uuid>"
+npx eas-cli@27.7.2 project:info
+```
+
+If values are stored in an ignored local environment file, explicitly load them into the shell with your trusted environment loader before invoking EAS. Never commit that file.

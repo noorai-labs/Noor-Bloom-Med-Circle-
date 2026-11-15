@@ -4,7 +4,7 @@ function identity(env) {
   const owner = env.EXPO_OWNER || '';
   const projectId = env.EXPO_PROJECT_ID || '';
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(owner)) {
-    throw new Error('Set the EXPO_OWNER Actions secret to the Expo account slug.');
+    throw new Error('Set the EXPO_OWNER Actions repository variable to the Expo account slug.');
   }
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId)) {
     throw new Error('Set the EXPO_PROJECT_ID Actions secret to the existing EAS project UUID.');
