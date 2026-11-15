@@ -18,8 +18,8 @@ The server setting is independent of workflow files. Required status checks are 
 
 ## One-time Expo secret
 
-1. Sign in to the Expo account with access to `@dominateranc/bloom-med`. For CI, create a robot user with Developer access and use its token rather than an unrestricted personal token.
-2. Open https://expo.dev/accounts/dominateranc/settings/access-tokens and create an access token for CI. Keep it out of chat/source code.
+1. Sign in to the Expo account with access to `@devnoorlabss-team/bloom-med`. For CI, create a robot user with Developer access and use its token rather than an unrestricted personal token.
+2. Open https://expo.dev/accounts/devnoorlabss-team/settings/access-tokens and create an access token for CI. Keep it out of chat/source code.
 3. Open https://github.com/noorai-labs/Noor-Bloom-Med-Circle-/settings/secrets/actions and choose New repository secret.
 4. Name: `EXPO_TOKEN`. Value: the Expo token. Save it.
 5. Keep `GOOGLE_SERVICES_JSON` in the existing EAS `preview` environment as a secret file variable. Do not commit it or service-account keys to GitHub.
@@ -52,3 +52,47 @@ CodeQL default setup is enabled for JavaScript/TypeScript with the extended quer
 Dependency Review passed on the contributor setup PR and is required in dev protection (GitHub Actions app 15368). `.github/workflows/dependency-review.yml` scans PRs targeting dev for newly introduced dependencies with known vulnerabilities. It fails for low-severity or higher findings, is not warn-only, and uses read-only repository permissions. It does not automatically approve, merge, change package versions, or prove that unchanged dependencies have no vulnerabilities. ANC-DOMINATER retains human approval.
 
 Socket is installed in noorai-labs with selected-repository access. To manage its installation, sign in as the GitHub organization owner ANC-DOMINATER, open https://github.com/apps/socket-security/installations/new, choose noorai-labs, select only Noor-Bloom-Med-Circle-, review permissions, and install on the Free plan. The contribution account noorlabs-dev cannot authorize an organization-wide App installation. Socket's actual installation and PR checks must be verified before declaring it active or adding a required check name.
+
+
+## Expo project transfer
+
+The existing bloom-med project now belongs to `devnoorlabss-team`. The existing EAS project ID is retained in the EXPO_PROJECT_ID Actions secret. Set the EXPO_OWNER Actions repository variable and EXPO_PROJECT_ID Actions secret as described below. Do not initialize a replacement project.
+
+The owner must replace GitHub's `EXPO_TOKEN` with a token that can access the destination team, preferably a Developer robot user belonging to that team. Keep the value out of chat and Git. An old team-specific robot token does not automatically gain access to the new team. Personal tokens depend on current membership and scope.
+
+Check the destination preview environment for `GOOGLE_SERVICES_JSON`, other required secret variables, and Android signing/FCM credentials. Account-level variables may need copying. Do not revoke the previous token until the new integration has passed verification. A successful queued build is not a finished APK.
+
+
+## Expo identity mapping
+
+Repository Actions settings are the CI source of truth:
+
+| Setting | Purpose |
+| --- | --- |
+| `EXPO_TOKEN` (secret) | Authenticate EAS with access to the owning team |
+| `EXPO_OWNER` (repository variable) | Expo account or organization slug |
+| `EXPO_PROJECT_ID` (secret) | UUID of the existing linked EAS project |
+
+`app.config.ts` maps owner and project ID from these environment variables; neither is hardcoded in app.json. The workflow validates them, then injects them into the preview profile's environment in the runner's copy of eas.json. That copy travels to the EAS builder so remote config resolves the same identity. This generated change is never committed. The token is never written into eas.json.
+
+The Actions summary derives the dashboard URL from EXPO_OWNER, the app slug and the returned build ID. No separate URL secret is needed. After a transfer, update EXPO_OWNER; retain EXPO_PROJECT_ID when transferring the existing project. Local developers must explicitly export both identity variables into the shell before EAS commands. Do not rely on EAS CLI loading .env.local during app-config resolution. PR validation needs no Expo secrets and does not queue builds.
+
+Configure EXPO_OWNER under Settings > Secrets and variables > Actions > Variables > New repository variable. Remove the obsolete EXPO_OWNER secret after creating the variable. Keep EXPO_TOKEN and EXPO_PROJECT_ID under Secrets.
+
+For local EAS commands, substitute the maintainer-provided values and export them first:
+
+PowerShell:
+```powershell
+$env:EXPO_OWNER = "<expo-owner>"
+$env:EXPO_PROJECT_ID = "<existing-project-uuid>"
+npx eas-cli@27.7.2 project:info
+```
+
+Bash:
+```bash
+export EXPO_OWNER="<expo-owner>"
+export EXPO_PROJECT_ID="<existing-project-uuid>"
+npx eas-cli@27.7.2 project:info
+```
+
+If values are stored in an ignored local environment file, explicitly load them into the shell with your trusted environment loader before invoking EAS. Never commit that file.
