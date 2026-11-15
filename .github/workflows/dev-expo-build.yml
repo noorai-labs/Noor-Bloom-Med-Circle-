@@ -70,4 +70,4 @@ jobs:
         run: eas build --platform android --profile preview --non-interactive --no-wait --json > eas-build.json
       - name: Add Expo build link
         run: |
-          node -e 'const fs=require("fs");const builds=JSON.parse(fs.readFileSync("eas-build.json","utf8"));for(const build of Array.isArray(builds)?builds:[builds])fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`Android build queued: https://expo.dev/accounts/dominateranc/projects/bloom-med/builds/${build.id}\n`);'
+          node -e 'const fs=require("fs");const builds=JSON.parse(fs.readFileSync("eas-build.json","utf8"));for(const build of Array.isArray(builds)?builds:[builds])fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`Android build queued: https://expo.dev/accounts/devnoorlabss-team/projects/bloom-med/builds/${build.id}\n`);'
