@@ -56,7 +56,7 @@ Socket is installed in noorai-labs with selected-repository access. To manage it
 
 ## Expo project transfer
 
-The existing bloom-med project now belongs to `devnoorlabss-team`. The EAS project ID stays `1b8258b4-1911-4985-9e16-c82f99c01128`. Set the EXPO_OWNER and EXPO_PROJECT_ID Actions secrets as described below. Do not initialize a replacement project.
+The existing bloom-med project now belongs to `devnoorlabss-team`. The existing EAS project ID is retained in the EXPO_PROJECT_ID Actions secret. Set the EXPO_OWNER and EXPO_PROJECT_ID Actions secrets as described below. Do not initialize a replacement project.
 
 The owner must replace GitHub's `EXPO_TOKEN` with a token that can access the destination team, preferably a Developer robot user belonging to that team. Keep the value out of chat and Git. An old team-specific robot token does not automatically gain access to the new team. Personal tokens depend on current membership and scope.
 
