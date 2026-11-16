@@ -24,14 +24,63 @@ import {
   Field,
   Entrance,
   Icon,
+  IconName,
   Label,
   Screen,
+  SlideDownFade,
   Touch,
   styles,
   theme,
   useKeyboardOpen,
 } from "../components";
 import { WelcomeGate } from "../welcome";
+
+const ROLE_DETAILS: Record<
+  Role,
+  {
+    title: string;
+    description: string;
+    icon: IconName;
+    badgeColor: string;
+    iconColor: string;
+  }
+> = {
+  Patient: {
+    title: "Patient",
+    description: "Book home visits, track daily medicines & view health records",
+    icon: "person-outline",
+    badgeColor: "#E5F5EF",
+    iconColor: "#17674E",
+  },
+  Doctor: {
+    title: "Doctor",
+    description: "Conduct consultations, prescribe meds & review records",
+    icon: "medkit-outline",
+    badgeColor: "#EBF1F7",
+    iconColor: "#225674",
+  },
+  Nurse: {
+    title: "Home Nurse",
+    description: "Manage assigned home visits, task checklists & nursing notes",
+    icon: "fitness-outline",
+    badgeColor: "#E6F4F1",
+    iconColor: "#1A6F68",
+  },
+  Family: {
+    title: "Family Caregiver",
+    description: "Follow loved one's appointments & care with patient consent",
+    icon: "people-outline",
+    badgeColor: "#FFF4E8",
+    iconColor: "#A65A18",
+  },
+  Admin: {
+    title: "Clinic Admin",
+    description: "Review provider credentials, approvals & support issues",
+    icon: "shield-checkmark-outline",
+    badgeColor: "#EDEBF7",
+    iconColor: "#4B3D8A",
+  },
+};
 export default function AuthScreen() {
   return (
     <WelcomeGate>
@@ -48,9 +97,11 @@ function DemoAuthScreen() {
   const [providerId, setProviderId] = useState("1");
   const [error, setError] = useState("");
   const [choosing, setChoosing] = useState(false);
-  const { height } = useWindowDimensions();
-
+  const [fieldFocused, setFieldFocused] = useState(false);
   const keyboardOpen = useKeyboardOpen();
+  const { height } = useWindowDimensions();
+  const isTyping = keyboardOpen || fieldFocused;
+
   function continueLogin() {
     const clean = identifier.trim();
     if (!/^\S+@\S+\.\S+$/.test(clean) && !/^\+?\d[\d\s-]{8,14}$/.test(clean)) {
@@ -73,100 +124,185 @@ function DemoAuthScreen() {
       />
     );
   const staff = role === "Nurse" ? nurses : doctors;
+  const activeStaff = staff.find((p) => p.id === providerId) || staff[0];
+
   return (
     <AuthLayout>
-      {!keyboardOpen && (
-        <View style={[styles.row, { marginVertical: 4 }]}>
-          <BloomLogo size={44} />
+      <View style={[styles.row, { gap: 10, marginVertical: 4, alignItems: "center" }]}>
+        <BloomLogo size={42} />
+        <View style={{ flex: 1 }}>
           <Text
             style={{
               color: theme.ink,
-              fontSize: 18,
+              fontSize: 19,
               fontWeight: "800",
-              letterSpacing: 1.4,
+              letterSpacing: 1.2,
             }}
           >
             {brand.name}
           </Text>
+          <Text style={{ fontSize: 11, color: theme.muted, fontWeight: "500" }}>
+            {brand.tagline}
+          </Text>
         </View>
-      )}
-      {step === "login" && !keyboardOpen && height > 680 && (
+      </View>
+
+      {step === "login" && !isTyping && height > 670 && (
         <Image
           source={require("../../assets/care-welcome.png")}
           accessibilityLabel="A care professional supporting a loved one at home"
           style={{
             width: "100%",
-            height: Math.min(176, Math.max(0, height - 650)),
-            borderRadius: 24,
+            height: Math.min(160, Math.max(110, height - 640)),
+            borderRadius: 22,
           }}
           resizeMode="cover"
         />
       )}
-      {!keyboardOpen && height > 650 && (
-        <View style={{ gap: 6 }}>
+
+      {step === "login" && !isTyping && height > 620 && (
+        <View style={{ gap: 4 }}>
           <Text
             style={{
-              fontSize: height < 700 ? 22 : 28,
-              lineHeight: 32,
+              fontSize: height < 700 ? 22 : 26,
+              lineHeight: height < 700 ? 28 : 32,
               color: theme.ink,
               fontWeight: "800",
             }}
           >
             Care that fits into your life.
           </Text>
-          {height > 750 && <Body muted>Thoughtful care, right at home.</Body>}
+          <Body muted>Thoughtful care, right at home.</Body>
         </View>
       )}
+
       <Entrance key={step}>
         <Card
           style={{
-            borderRadius: 26,
-            padding: 16,
-            gap: keyboardOpen || height < 700 ? 8 : 12,
+            borderRadius: 24,
+            padding: 20,
+            gap: 16,
           }}
         >
-          {!keyboardOpen && (
-            <Text style={[styles.title, { fontSize: 21, lineHeight: 26 }]}>
+          <View style={{ gap: 4 }}>
+            <Text style={[styles.title, { fontSize: 20, lineHeight: 26 }]}>
               {step === "login"
-                ? "Your care starts here"
-                : "One small step to care"}
+                ? role === "Doctor"
+                  ? "Doctor Clinical Portal"
+                  : "Your care starts here"
+                : "Verify your identity"}
             </Text>
-          )}
-          {!keyboardOpen && (
             <Body muted>
               {step === "login"
-                ? "Choose a role to explore your local care space."
-                : "Use the demo code 123456. No SMS is sent."}
+                ? role === "Doctor"
+                  ? "Access patient consultations, care plans, and prescribed medicines."
+                  : "Sign in to explore your personalized home care space."
+                : `Enter the 6-digit verification code sent to ${identifier || "your account"}.`}
             </Body>
-          )}
+          </View>
+
           {step === "login" ? (
             <>
-              <Touch
-                label="Choose demo role"
-                onPress={() => setChoosing(true)}
-                style={{
-                  paddingVertical: 8,
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <Text style={{ color: theme.green, fontWeight: "700" }}>
-                  {role}
-                  {["Doctor", "Nurse"].includes(role)
-                    ? " � " + staff.find((p) => p.id === providerId)?.name
-                    : " care space"}
-                </Text>
-                <Icon name="chevron-down" size={18} />
-              </Touch>
+              {/* Clean Role Selector Card */}
+              <View style={{ gap: 6 }}>
+                <Label>Signing in as</Label>
+                <Touch
+                  label="Change care role"
+                  onPress={() => setChoosing(true)}
+                  style={{
+                    padding: 12,
+                    backgroundColor: "#F7FAF8",
+                    borderRadius: 14,
+                    borderWidth: 1.5,
+                    borderColor: "#DCEAE2",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: ROLE_DETAILS[role].badgeColor,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Icon
+                      name={ROLE_DETAILS[role].icon}
+                      color={ROLE_DETAILS[role].iconColor}
+                      size={20}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        fontWeight: "700",
+                        fontSize: 15,
+                        color: theme.ink,
+                      }}
+                    >
+                      {role === "Doctor" ? activeStaff.name : ROLE_DETAILS[role].title}
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color: theme.muted,
+                        marginTop: 1,
+                      }}
+                    >
+                      {role === "Doctor"
+                        ? `${activeStaff.specialty} · Clinical Portal`
+                        : role === "Nurse"
+                          ? `${activeStaff.name} · ${activeStaff.specialty}`
+                          : ROLE_DETAILS[role].description}
+                    </Text>
+                  </View>
+                  <View
+                    style={{
+                      backgroundColor: "white",
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: "#DCEAE2",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color: theme.green,
+                        fontWeight: "700",
+                      }}
+                    >
+                      Switch
+                    </Text>
+                    <Icon name="chevron-forward" size={13} color={theme.green} />
+                  </View>
+                </Touch>
+              </View>
+
               <Field
-                label="Email or mobile number"
+                label={
+                  role === "Doctor"
+                    ? "Doctor email or staff ID"
+                    : "Email or mobile number"
+                }
                 value={identifier}
                 onChange={(value) => {
                   setIdentifier(value);
                   setError("");
                 }}
-                placeholder="you@example.com"
+                placeholder={
+                  role === "Doctor"
+                    ? "dr.aisha@bloommed.in"
+                    : "you@example.com"
+                }
                 error={error}
                 inputProps={{
                   autoCapitalize: "none",
@@ -175,16 +311,78 @@ function DemoAuthScreen() {
                   autoComplete: "email",
                   returnKeyType: "go",
                   onSubmitEditing: continueLogin,
+                  onFocus: () => setFieldFocused(true),
+                  onBlur: () => setFieldFocused(false),
                 }}
               />
               <Button
-                title="Continue"
+                title={
+                  role === "Doctor"
+                    ? "Continue as Doctor"
+                    : "Continue"
+                }
                 icon="arrow-forward"
                 onPress={continueLogin}
               />
             </>
           ) : (
             <>
+              {/* OTP Context Banner */}
+              <View
+                style={{
+                  padding: 12,
+                  backgroundColor: "#F4F8F6",
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: "#D8EAE0",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <View
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: ROLE_DETAILS[role].badgeColor,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Icon
+                    name={ROLE_DETAILS[role].icon}
+                    size={18}
+                    color={ROLE_DETAILS[role].iconColor}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      color: theme.muted,
+                      textTransform: "uppercase",
+                      fontWeight: "700",
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Signing in as {ROLE_DETAILS[role].title}
+                  </Text>
+                  <Text
+                    style={{
+                      fontWeight: "700",
+                      fontSize: 13,
+                      color: theme.ink,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {["Doctor", "Nurse"].includes(role)
+                      ? `${activeStaff.name} · ${identifier}`
+                      : identifier}
+                  </Text>
+                </View>
+              </View>
+
               <Field
                 label="Verification code"
                 value={code}
@@ -201,10 +399,46 @@ function DemoAuthScreen() {
                   textContentType: "oneTimeCode",
                   autoCorrect: false,
                   autoCapitalize: "none",
+                  onFocus: () => setFieldFocused(true),
+                  onBlur: () => setFieldFocused(false),
                 }}
               />
+
+              <Touch
+                label="Auto-fill demo verification code"
+                onPress={() => {
+                  setCode("123456");
+                  setError("");
+                }}
+                style={{
+                  alignSelf: "flex-start",
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  backgroundColor: "#E5F5EF",
+                  borderRadius: 8,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <Icon name="key-outline" size={14} color={theme.green} />
+                <Text
+                  style={{
+                    fontSize: 12,
+                    color: theme.green,
+                    fontWeight: "700",
+                  }}
+                >
+                  Fill demo OTP (123456)
+                </Text>
+              </Touch>
+
               <Button
-                title="Enter my care space"
+                title={
+                  role === "Doctor"
+                    ? "Enter Doctor Portal"
+                    : "Enter my care space"
+                }
                 onPress={() => {
                   if (code !== "123456")
                     return setError("Enter demo code 123456.");
@@ -236,33 +470,33 @@ function DemoAuthScreen() {
           )}
         </Card>
       </Entrance>
-      {!keyboardOpen && (
+
+      <View
+        style={{
+          gap: 6,
+          alignItems: "center",
+          paddingTop: 8,
+          paddingBottom: 4,
+        }}
+      >
         <View
+          style={[styles.row, { justifyContent: "center", flexWrap: "wrap", gap: 6 }]}
+        >
+          <Icon name="shield-checkmark-outline" size={15} color={theme.muted} />
+          <Body muted>Local demo · Fictional data only</Body>
+        </View>
+        <Text
           style={{
-            gap: 8,
-            alignItems: "center",
-            paddingTop: 6,
-            paddingBottom: 0,
+            color: theme.muted,
+            textAlign: "center",
+            fontSize: 11,
+            lineHeight: 16,
           }}
         >
-          <View
-            style={[styles.row, { justifyContent: "center", flexWrap: "wrap" }]}
-          >
-            <Icon name="shield-checkmark-outline" size={16} />
-            <Body muted>Local demo · Fictional data only</Body>
-          </View>
-          <Text
-            style={{
-              color: theme.muted,
-              textAlign: "center",
-              fontSize: 11,
-              lineHeight: 16,
-            }}
-          >
-            {brand.company} · Your care, connected.
-          </Text>
-        </View>
-      )}
+          {brand.company} · {brand.tagline}
+        </Text>
+      </View>
+
       <Modal
         visible={choosing}
         transparent
@@ -272,41 +506,378 @@ function DemoAuthScreen() {
         <View
           style={{
             flex: 1,
-            backgroundColor: "#162C3580",
+            backgroundColor: "#162C3585",
             justifyContent: "center",
-            padding: 24,
+            alignItems: "center",
+            padding: height > 700 ? 20 : 14,
           }}
         >
-          <Card style={{ maxHeight: "80%" }}>
-            <Text style={styles.cardTitle}>Choose your demo care space</Text>
-            <ScrollView>
-              <View style={{ gap: 14 }}>
-                <Chips
-                  values={roles}
-                  value={role}
-                  onChange={(v) => {
-                    setRole(v as Role);
-                    setProviderId(v === "Nurse" ? "n1" : "1");
-                  }}
-                />
-                {["Doctor", "Nurse"].includes(role) && (
-                  <>
-                    <Label>Care professional</Label>
-                    <Chips
-                      values={staff.map((p) => p.name)}
-                      value={
-                        staff.find((p) => p.id === providerId)?.name ||
-                        staff[0].name
-                      }
-                      onChange={(name) =>
-                        setProviderId(staff.find((p) => p.name === name)!.id)
-                      }
-                    />
-                  </>
-                )}
+          <Card
+            style={{
+              width: "100%",
+              maxWidth: 500,
+              maxHeight: height > 700 ? "88%" : "94%",
+              padding: height > 700 ? 20 : 16,
+              gap: 14,
+              borderRadius: 24,
+              backgroundColor: "white",
+            }}
+          >
+            {/* Modal Header */}
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+              }}
+            >
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={[styles.cardTitle, { fontSize: 20 }]}>
+                  Choose your care role
+                </Text>
+                <Text style={{ fontSize: 13, color: theme.muted, marginTop: 2 }}>
+                  Experience BLOOM MED from any perspective.
+                </Text>
+              </View>
+              <Touch
+                label="Close role selector"
+                onPress={() => setChoosing(false)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 16,
+                  backgroundColor: "#F0F4F2",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Icon name="close" size={18} color={theme.ink} />
+              </Touch>
+            </View>
+
+            {/* Scrollable Role & Professional List */}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ gap: 14, paddingBottom: 6 }}
+            >
+              {/* Role Cards List with Inline Provider Dropdowns */}
+              <View style={{ gap: 10 }}>
+                {roles.map((r) => {
+                  const details = ROLE_DETAILS[r];
+                  const isSelected = role === r;
+                  return (
+                    <View key={r} style={{ gap: 8 }}>
+                      <Touch
+                        label={"Select " + details.title}
+                        selected={isSelected}
+                        onPress={() => {
+                          setRole(r);
+                          if (r === "Nurse") setProviderId("n1");
+                          else if (r === "Doctor") setProviderId("1");
+                        }}
+                        style={{
+                          padding: 14,
+                          borderRadius: 16,
+                          backgroundColor: isSelected ? "#F3F9F6" : "#FAFCFB",
+                          borderWidth: 1.5,
+                          borderColor: isSelected ? theme.green : "#E4EDE8",
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 12,
+                        }}
+                      >
+                        <View
+                          style={{
+                            width: 42,
+                            height: 42,
+                            borderRadius: 21,
+                            backgroundColor: details.badgeColor,
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          <Icon
+                            name={details.icon}
+                            size={20}
+                            color={details.iconColor}
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text
+                            style={{
+                              fontWeight: "700",
+                              fontSize: 15,
+                              color: isSelected ? theme.green : theme.ink,
+                            }}
+                          >
+                            {details.title}
+                          </Text>
+                          <Text
+                            style={{
+                              fontSize: 12,
+                              color: theme.muted,
+                              marginTop: 2,
+                              lineHeight: 16,
+                            }}
+                          >
+                            {details.description}
+                          </Text>
+                        </View>
+                        <View
+                          style={{
+                            width: 22,
+                            height: 22,
+                            borderRadius: 11,
+                            borderWidth: 2,
+                            borderColor: isSelected ? theme.green : "#CAD7CF",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: isSelected ? theme.green : "transparent",
+                          }}
+                        >
+                          {isSelected && (
+                            <View
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: 4,
+                                backgroundColor: "white",
+                              }}
+                            />
+                          )}
+                        </View>
+                      </Touch>
+
+                      {/* Doctor Profiles Dropdown directly below Doctor card */}
+                      {r === "Doctor" && isSelected && (
+                        <SlideDownFade>
+                          <View
+                            style={{
+                              marginLeft: 14,
+                              paddingLeft: 12,
+                              borderLeftWidth: 2.5,
+                              borderLeftColor: theme.green,
+                              gap: 8,
+                              marginTop: 2,
+                              marginBottom: 4,
+                            }}
+                          >
+                            <View style={{ gap: 2 }}>
+                              <Text
+                                style={{
+                                  fontWeight: "700",
+                                  fontSize: 13,
+                                  color: theme.ink,
+                                }}
+                              >
+                                Choose Doctor Profile
+                              </Text>
+                              <Text style={{ fontSize: 11, color: theme.muted }}>
+                                Visits and consultations are scoped to this physician.
+                              </Text>
+                            </View>
+                            <View style={{ gap: 6 }}>
+                              {doctors.map((p) => {
+                                const isDocSelected = p.id === (providerId || "1");
+                                return (
+                                  <Touch
+                                    key={p.id}
+                                    label={"Select " + p.name}
+                                    selected={isDocSelected}
+                                    onPress={() => setProviderId(p.id)}
+                                    style={{
+                                      padding: 10,
+                                      borderRadius: 12,
+                                      backgroundColor: isDocSelected ? "#E5F5EF" : "#FFFFFF",
+                                      borderWidth: 1.5,
+                                      borderColor: isDocSelected ? theme.green : "#E4EDE8",
+                                      flexDirection: "row",
+                                      alignItems: "center",
+                                      gap: 10,
+                                    }}
+                                  >
+                                    <Avatar providerId={p.id} size={36} />
+                                    <View style={{ flex: 1 }}>
+                                      <View
+                                        style={{
+                                          flexDirection: "row",
+                                          alignItems: "center",
+                                          gap: 6,
+                                        }}
+                                      >
+                                        <Text
+                                          style={{
+                                            fontWeight: "700",
+                                            fontSize: 13,
+                                            color: isDocSelected ? theme.green : theme.ink,
+                                          }}
+                                        >
+                                          {p.name}
+                                        </Text>
+                                        <View
+                                          style={{
+                                            backgroundColor: "#F0F4F2",
+                                            paddingHorizontal: 5,
+                                            paddingVertical: 1,
+                                            borderRadius: 5,
+                                          }}
+                                        >
+                                          <Text
+                                            style={{
+                                              fontSize: 10,
+                                              color: theme.muted,
+                                              fontWeight: "600",
+                                            }}
+                                          >
+                                            ★ {p.rating}
+                                          </Text>
+                                        </View>
+                                      </View>
+                                      <Text
+                                        style={{
+                                          fontSize: 11,
+                                          color: theme.muted,
+                                          marginTop: 1,
+                                        }}
+                                      >
+                                        {p.specialty} · {p.experience} yrs exp
+                                      </Text>
+                                    </View>
+                                    {isDocSelected && (
+                                      <Icon
+                                        name="checkmark-circle"
+                                        size={18}
+                                        color={theme.green}
+                                      />
+                                    )}
+                                  </Touch>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        </SlideDownFade>
+                      )}
+
+                      {/* Nurse Profiles Dropdown directly below Nurse card */}
+                      {r === "Nurse" && isSelected && (
+                        <SlideDownFade>
+                          <View
+                            style={{
+                              marginLeft: 14,
+                              paddingLeft: 12,
+                              borderLeftWidth: 2.5,
+                              borderLeftColor: theme.green,
+                              gap: 8,
+                              marginTop: 2,
+                              marginBottom: 4,
+                            }}
+                          >
+                            <View style={{ gap: 2 }}>
+                              <Text
+                                style={{
+                                  fontWeight: "700",
+                                  fontSize: 13,
+                                  color: theme.ink,
+                                }}
+                              >
+                                Choose Nurse Profile
+                              </Text>
+                              <Text style={{ fontSize: 11, color: theme.muted }}>
+                                Home visit queues are scoped to this nurse.
+                              </Text>
+                            </View>
+                            <View style={{ gap: 6 }}>
+                              {nurses.map((p) => {
+                                const isNurseSelected = p.id === (providerId || "n1");
+                                return (
+                                  <Touch
+                                    key={p.id}
+                                    label={"Select " + p.name}
+                                    selected={isNurseSelected}
+                                    onPress={() => setProviderId(p.id)}
+                                    style={{
+                                      padding: 10,
+                                      borderRadius: 12,
+                                      backgroundColor: isNurseSelected ? "#E5F5EF" : "#FFFFFF",
+                                      borderWidth: 1.5,
+                                      borderColor: isNurseSelected ? theme.green : "#E4EDE8",
+                                      flexDirection: "row",
+                                      alignItems: "center",
+                                      gap: 10,
+                                    }}
+                                  >
+                                    <Avatar providerId={p.id} size={36} />
+                                    <View style={{ flex: 1 }}>
+                                      <View
+                                        style={{
+                                          flexDirection: "row",
+                                          alignItems: "center",
+                                          gap: 6,
+                                        }}
+                                      >
+                                        <Text
+                                          style={{
+                                            fontWeight: "700",
+                                            fontSize: 13,
+                                            color: isNurseSelected ? theme.green : theme.ink,
+                                          }}
+                                        >
+                                          {p.name}
+                                        </Text>
+                                        <View
+                                          style={{
+                                            backgroundColor: "#F0F4F2",
+                                            paddingHorizontal: 5,
+                                            paddingVertical: 1,
+                                            borderRadius: 5,
+                                          }}
+                                        >
+                                          <Text
+                                            style={{
+                                              fontSize: 10,
+                                              color: theme.muted,
+                                              fontWeight: "600",
+                                            }}
+                                          >
+                                            ★ {p.rating}
+                                          </Text>
+                                        </View>
+                                      </View>
+                                      <Text
+                                        style={{
+                                          fontSize: 11,
+                                          color: theme.muted,
+                                          marginTop: 1,
+                                        }}
+                                      >
+                                        {p.specialty} · {p.experience} yrs exp
+                                      </Text>
+                                    </View>
+                                    {isNurseSelected && (
+                                      <Icon
+                                        name="checkmark-circle"
+                                        size={18}
+                                        color={theme.green}
+                                      />
+                                    )}
+                                  </Touch>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        </SlideDownFade>
+                      )}
+                    </View>
+                  );
+                })}
               </View>
             </ScrollView>
-            <Button title="Done" onPress={() => setChoosing(false)} />
+
+            <Button
+              title={`Continue as ${ROLE_DETAILS[role].title}`}
+              icon="arrow-forward"
+              onPress={() => setChoosing(false)}
+            />
           </Card>
         </View>
       </Modal>

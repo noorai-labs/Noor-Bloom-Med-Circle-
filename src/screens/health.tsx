@@ -197,8 +197,8 @@ export function RecordsScreen() {
         ))}
       {!records.length && !["History", "Care plans"].includes(filter) && (
         <Empty
-          title="A fresh page"
-          body="Records matching this filter will appear here."
+          title="No health records yet"
+          body="Keep all your lab reports, prescriptions, and health summaries organized in one secure place."
           icon="folder-open-outline"
         />
       )}
@@ -268,6 +268,9 @@ export function RecordScreen() {
         <Empty
           title="Record not found"
           body="This record may have been removed."
+          icon="document-text-outline"
+          action="Back to records"
+          onPress={() => router.replace("/(tabs)/records")}
         />
       </Screen>
     );
@@ -454,9 +457,11 @@ export function MedicinesScreen() {
       ))}
       {!meds.length && (
         <Empty
-          title="No active medicines"
-          body="Add a reminder from an existing prescription, or receive one from a demo doctor’s care plan."
+          title="No medicine reminders yet"
+          body="Track daily doses, stay on schedule, and keep your care team informed."
           icon="medical-outline"
+          action={!readonly ? "Add a medicine reminder" : undefined}
+          onPress={!readonly ? () => setShowForm(true) : undefined}
         />
       )}
       {!readonly && (

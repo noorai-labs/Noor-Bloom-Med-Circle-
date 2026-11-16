@@ -136,6 +136,9 @@ export function ProfessionalScreen() {
         <Empty
           title="Profile not found"
           body="Choose a professional from Find care."
+          icon="person-outline"
+          action="Find care"
+          onPress={() => router.replace("/discover")}
         />
       </Screen>
     );
@@ -579,12 +582,21 @@ export function AppointmentsScreen() {
       ))}
       {!list.length && (
         <Empty
-          title="Nothing here yet"
-          body="Appointments matching this filter will appear here."
+          title="No visits yet"
+          body="Book your first appointment with a verified doctor or home nurse."
           icon="calendar-outline"
+          action="Find a doctor"
+          onPress={() =>
+            router.push({
+              pathname: "/discover",
+              params: { kind: "doctor" },
+            })
+          }
+          secondaryAction="Explore all care"
+          onSecondaryPress={() => router.push("/discover")}
         />
       )}
-      {["Patient", "Family"].includes(state.session?.role || "") && (
+      {list.length > 0 && ["Patient", "Family"].includes(state.session?.role || "") && (
         <Button
           title="Book another care moment"
           icon="add"
@@ -617,6 +629,9 @@ export function VisitScreen() {
         <Empty
           title="Visit unavailable"
           body="Choose a visit assigned to your current care role."
+          icon="alert-circle-outline"
+          action="Back to appointments"
+          onPress={() => router.replace("/(tabs)/appointments")}
         />
       </Screen>
     );

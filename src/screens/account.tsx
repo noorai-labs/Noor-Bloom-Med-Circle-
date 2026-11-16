@@ -283,9 +283,11 @@ export function InboxScreen() {
       ))}
       {!items.length && (
         <Empty
-          title="All quiet for now"
-          body="Bookings, care plans and support updates will appear here."
+          title="No activity updates yet"
+          body="Appointment confirmations, medicine reminders, and care notes will appear here."
           icon="notifications-outline"
+          action="Find care"
+          onPress={() => router.push("/discover")}
         />
       )}
     </Screen>
@@ -332,8 +334,8 @@ export function SupportScreen() {
       ))}
       {!state.issues.length && (
         <Empty
-          title="Nothing to follow up"
-          body="Your local support requests will appear here."
+          title="No open support requests"
+          body="Need help with appointments or records? Describe an issue above to alert clinic support."
           icon="chatbubble-outline"
         />
       )}

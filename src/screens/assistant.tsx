@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
 import { formatDate, providerFor, visibleVisits } from "../clinic";
@@ -11,11 +11,12 @@ import {
   Field,
   Icon,
   Screen,
+  SlideDownFade,
   styles,
   theme,
   Title,
-  Touch,
 } from "../components";
+import { VoicePoweredOrb, VoiceOrbModal } from "../voice-orb";
 export default function AssistantScreen() {
   const { state } = useClinic();
   const [messages, setMessages] = useState([
@@ -120,7 +121,29 @@ export default function AssistantScreen() {
           </Text>
         </View>
       ))}
-      {thinking && <Body muted>Bloom is thinking…</Body>}
+      {thinking && (
+        <SlideDownFade duration={300} distance={8}>
+          <View
+            accessibilityLiveRegion="polite"
+            accessibilityLabel="Bloom is thinking"
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 14,
+              backgroundColor: "#EBF3F8",
+              borderRadius: 16,
+              alignSelf: "flex-start",
+            }}
+          >
+            <ActivityIndicator size="small" color={theme.green} />
+            <Text style={{ fontSize: 13, color: theme.muted, fontWeight: "600" }}>
+              Bloom is thinking…
+            </Text>
+          </View>
+        </SlideDownFade>
+      )}
       <View style={styles.wrap}>
         {[
           "My next appointment",
@@ -136,6 +159,10 @@ export default function AssistantScreen() {
         value={text}
         onChange={setText}
         placeholder="How can I help with your care?"
+        inputProps={{
+          returnKeyType: "send",
+          onSubmitEditing: () => send(text),
+        }}
       />
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
@@ -146,39 +173,14 @@ export default function AssistantScreen() {
             onPress={() => send(text)}
           />
         </View>
-        <Touch
-          label="Simulated voice assistant"
-          onPress={() => setVoice(!voice)}
-          style={[styles.iconButton, { height: 52, width: 52 }]}
-        >
-          <Icon name="mic-outline" />
-        </Touch>
+        <VoicePoweredOrb size={52} bg="#F6F8FA" onPress={() => setVoice(true)} />
       </View>
-      {voice && (
-        <Card>
-          <Title small>Try a voice command</Title>
-          <Body muted>
-            Simulated input · No microphone recording. Preferred language:{" "}
-            {state.profile.language}.
-          </Body>
-          {[
-            "Book a doctor",
-            "Show my reports",
-            "When is my next appointment?",
-            "Remind me about my medicine",
-          ].map((t) => (
-            <Button
-              key={t}
-              title={t}
-              secondary
-              onPress={() => {
-                send(t);
-                setVoice(false);
-              }}
-            />
-          ))}
-        </Card>
-      )}
+      <VoiceOrbModal
+        visible={voice}
+        onClose={() => setVoice(false)}
+        onCommand={(cmd) => send(cmd)}
+        language={state.profile.language}
+      />
       <Title small>Take the next step</Title>
       <View style={styles.wrap}>
         <Chip title="Find care →" onPress={() => router.push("/discover")} />

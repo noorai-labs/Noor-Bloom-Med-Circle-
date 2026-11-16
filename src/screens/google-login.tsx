@@ -1,7 +1,7 @@
-import React, { useEffect } from "react";
-import { Image, Platform, Text, View, useWindowDimensions } from "react-native";
+import React, { useEffect, useState } from "react";
+import { ActivityIndicator, Image, Modal, Platform, Text, View, useWindowDimensions } from "react-native";
 import Constants, { ExecutionEnvironment } from "expo-constants";
-import { useAuth, useSSO } from "@clerk/expo";
+import { useAuth, useClerk, useSSO } from "@clerk/expo";
 import { Redirect } from "expo-router";
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
@@ -12,23 +12,41 @@ import {
   Button,
   Card,
   Entrance,
+  ErrorBanner,
+  ErrorState,
+  Field,
   Icon,
+  SlideDownFade,
   theme,
   Title,
+  Touch,
 } from "../components";
 import { setAuthFlow, useAuthFlow } from "../auth-flow";
 import { GentleMotion } from "../welcome";
 import { AuthLayout } from "../auth-layout";
+
 WebBrowser.maybeCompleteAuthSession();
+
 export function GoogleLogin() {
   const { height } = useWindowDimensions();
   const { state, cloud } = useClinic();
   const { isSignedIn } = useAuth();
   const { startSSOFlow } = useSSO();
+  const clerk = useClerk();
   const { busy, error } = useAuthFlow();
+
+  const [method, setMethod] = useState<"options" | "email" | "email_otp">("options");
+  const [email, setEmail] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [emailSubmitting, setEmailSubmitting] = useState(false);
+  const [emailError, setEmailError] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
   const expoGo =
     Platform.OS !== "web" &&
     Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
   useEffect(() => {
     if (Platform.OS !== "android") return;
     void WebBrowser.warmUpAsync();
@@ -36,6 +54,7 @@ export function GoogleLogin() {
       void WebBrowser.coolDownAsync();
     };
   }, []);
+
   if (state.session)
     return (
       <Redirect
@@ -46,6 +65,7 @@ export function GoogleLogin() {
         }
       />
     );
+
   async function signIn() {
     if (expoGo) {
       setAuthFlow({
@@ -110,6 +130,97 @@ export function GoogleLogin() {
       setAuthFlow({ busy: false, error: failureMessage });
     }
   }
+
+  async function handleSendEmailCode() {
+    const cleanEmail = email.trim();
+    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) {
+      setEmailError("Enter a valid email address.");
+      return;
+    }
+    setEmailSubmitting(true);
+    setEmailError("");
+    try {
+      if (isSignUp) {
+        await clerk.client.signUp.create({ emailAddress: cleanEmail });
+        await clerk.client.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+        setMethod("email_otp");
+      } else {
+        try {
+          const attempt = await clerk.client.signIn.create({ identifier: cleanEmail });
+          const factor = attempt.supportedFirstFactors?.find(
+            (f) => f.strategy === "email_code"
+          );
+          if (factor && "emailAddressId" in factor) {
+            await clerk.client.signIn.prepareFirstFactor({
+              strategy: "email_code",
+              emailAddressId: factor.emailAddressId as string,
+            });
+          }
+          setMethod("email_otp");
+        } catch (err: unknown) {
+          const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
+          const code = clerkErr?.errors?.[0]?.code;
+          if (code === "form_identifier_not_found") {
+            await clerk.client.signUp.create({ emailAddress: cleanEmail });
+            await clerk.client.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+            setIsSignUp(true);
+            setMethod("email_otp");
+          } else {
+            throw err;
+          }
+        }
+      }
+    } catch (err: unknown) {
+      const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
+      const msg =
+        clerkErr?.errors?.[0]?.longMessage ||
+        clerkErr?.errors?.[0]?.message ||
+        (err instanceof Error ? err.message : "Failed to send verification code.");
+      setEmailError(msg);
+    } finally {
+      setEmailSubmitting(false);
+    }
+  }
+
+  async function handleVerifyEmailCode() {
+    const cleanCode = otpCode.trim();
+    if (cleanCode.length < 6) {
+      setEmailError("Enter the 6-digit verification code.");
+      return;
+    }
+    setEmailSubmitting(true);
+    setEmailError("");
+    try {
+      if (isSignUp) {
+        const res = await clerk.client.signUp.attemptEmailAddressVerification({ code: cleanCode });
+        if (res.status === "complete" && res.createdSessionId) {
+          await clerk.setActive({ session: res.createdSessionId });
+        } else {
+          setEmailError("Verification incomplete. Please check code.");
+        }
+      } else {
+        const res = await clerk.client.signIn.attemptFirstFactor({
+          strategy: "email_code",
+          code: cleanCode,
+        });
+        if (res.status === "complete" && res.createdSessionId) {
+          await clerk.setActive({ session: res.createdSessionId });
+        } else {
+          setEmailError("Sign in incomplete. Please check code.");
+        }
+      }
+    } catch (err: unknown) {
+      const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
+      const msg =
+        clerkErr?.errors?.[0]?.longMessage ||
+        clerkErr?.errors?.[0]?.message ||
+        (err instanceof Error ? err.message : "Invalid verification code.");
+      setEmailError(msg);
+    } finally {
+      setEmailSubmitting(false);
+    }
+  }
+
   return (
     <AuthLayout>
       <View
@@ -132,7 +243,8 @@ export function GoogleLogin() {
           BLOOM MED
         </Text>
       </View>
-      {height > 700 && (
+
+      {method === "options" && height > 700 && (
         <GentleMotion>
           <View>
             <Image
@@ -168,79 +280,331 @@ export function GoogleLogin() {
           </View>
         </GentleMotion>
       )}
+
       <Title>Care that stays with you.</Title>
-      <Body muted>
-        Sign in securely and keep your care updates connected across devices.
-      </Body>
+      <Body muted>Care, records and support in one place.</Body>
+
       <Entrance>
-        <Card>
-          <Title small>
-            {isSignedIn ? "Connect your care space" : "Welcome to BLOOM MED"}
-          </Title>
-          {!isSignedIn && expoGo && (
-            <Body muted>
-              Google sign-in needs the installed BLOOM MED development app; Expo
-              Go cannot complete this callback.
-            </Body>
-          )}
-          {!isSignedIn ? (
-            <Button
-              title={busy ? "Opening Google…" : "Continue with Google"}
-              icon="logo-google"
-              disabled={busy}
-              onPress={signIn}
+        {isSignedIn ? (
+          cloud?.error ? (
+            <ErrorState
+              title="Couldn’t connect to care space"
+              message={
+                cloud.error.includes("Failed to fetch") || cloud.error.includes("Network")
+                  ? "Couldn’t reach the care server. Please check your internet connection and try again."
+                  : cloud.error
+              }
+              onRetry={() => void cloud?.refresh()}
+              retryLabel="Try again"
+              secondaryAction="Open personal care space"
+              onSecondaryPress={() => void cloud?.select("")}
             />
           ) : (
-            <>
-              <Body muted>
-                {cloud?.error || "Loading your cloud care space…"}
-              </Body>
-              <Button
-                title="Retry connection"
-                onPress={() => void cloud?.refresh()}
-              />
+            <Card style={{ gap: 16 }}>
+              <Title small>Connect your care space</Title>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  paddingVertical: 8,
+                }}
+              >
+                <ActivityIndicator color={theme.green} size="small" />
+                <Body muted style={{ flexShrink: 1 }}>
+                  Connecting to your secure cloud care space…
+                </Body>
+              </View>
               <Button
                 title="Open my personal care space"
                 secondary
+                icon="person-outline"
                 onPress={() => void cloud?.select("")}
               />
               <Button
                 title="Sign out"
-                secondary
+                outline
+                icon="log-out-outline"
                 onPress={() => void cloud?.signOut()}
               />
-            </>
-          )}
-          {!!error && (
-            <Text
-              accessibilityLiveRegion="polite"
-              style={{ color: theme.red, lineHeight: 20 }}
-            >
-              {error}
-            </Text>
-          )}
-          <Body muted>
-            Google is the only sign-in option. Your care team access is assigned
-            securely.
-          </Body>
-        </Card>
+            </Card>
+          )
+        ) : method === "email" ? (
+          <Card>
+            <SlideDownFade>
+              <View style={{ gap: 14 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 2,
+                  }}
+                >
+                  <Touch
+                    label="Back to options"
+                    onPress={() => {
+                      setMethod("options");
+                      setEmailError("");
+                    }}
+                    style={{ padding: 4 }}
+                  >
+                    <Icon name="arrow-back" size={20} color={theme.ink} />
+                  </Touch>
+                  <Title small>
+                    {isSignUp ? "Create your account" : "Continue with email"}
+                  </Title>
+                </View>
+
+                <Body muted>
+                  {isSignUp
+                    ? "Enter your email address to set up your secure care space."
+                    : "Enter your email address to receive a secure sign-in code."}
+                </Body>
+
+                <Field
+                  label="Email address"
+                  value={email}
+                  onChange={(val) => {
+                    setEmail(val);
+                    setEmailError("");
+                  }}
+                  placeholder="you@example.com"
+                  error={emailError}
+                />
+
+                <Button
+                  title={
+                    emailSubmitting
+                      ? "Sending code…"
+                      : "Send verification code"
+                  }
+                  icon="arrow-forward"
+                  disabled={emailSubmitting}
+                  loading={emailSubmitting}
+                  onPress={handleSendEmailCode}
+                />
+              </View>
+            </SlideDownFade>
+          </Card>
+        ) : method === "email_otp" ? (
+          <Card>
+            <SlideDownFade>
+              <View style={{ gap: 14 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 2,
+                  }}
+                >
+                  <Touch
+                    label="Back"
+                    onPress={() => {
+                      setMethod("email");
+                      setEmailError("");
+                    }}
+                    style={{ padding: 4 }}
+                  >
+                    <Icon name="arrow-back" size={20} color={theme.ink} />
+                  </Touch>
+                  <Title small>Check your inbox</Title>
+                </View>
+
+                <Body muted>
+                  We sent a 6-digit verification code to{" "}
+                  <Text style={{ color: theme.ink, fontWeight: "700" }}>
+                    {email}
+                  </Text>
+                  .
+                </Body>
+
+                <Field
+                  label="Verification code"
+                  value={otpCode}
+                  onChange={(val) => {
+                    setOtpCode(val.replace(/\D/g, "").slice(0, 6));
+                    setEmailError("");
+                  }}
+                  placeholder="123456"
+                  numeric
+                  error={emailError}
+                />
+
+                <Button
+                  title={emailSubmitting ? "Verifying…" : "Verify & Continue"}
+                  disabled={emailSubmitting || otpCode.length < 6}
+                  loading={emailSubmitting}
+                  onPress={handleVerifyEmailCode}
+                />
+
+                <Touch
+                  label="Resend code"
+                  onPress={handleSendEmailCode}
+                  style={{ alignSelf: "center", paddingVertical: 4 }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      color: theme.green,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {"Didn't get a code? Resend"}
+                  </Text>
+                </Touch>
+              </View>
+            </SlideDownFade>
+          </Card>
+        ) : (
+          <Card>
+            <Title small>Welcome back</Title>
+            {expoGo && (
+              <Body muted>
+                Google sign-in needs the installed BLOOM MED development app;
+                Expo Go cannot complete this callback.
+              </Body>
+            )}
+
+            <View style={{ gap: 12 }}>
+              <Button
+                title={busy ? "Opening Google…" : "Continue with Google"}
+                icon="logo-google"
+                disabled={busy}
+                onPress={signIn}
+              />
+              <Button
+                title="Continue with email"
+                outline
+                icon="mail-outline"
+                disabled={busy}
+                onPress={() => {
+                  setMethod("email");
+                  setIsSignUp(false);
+                  setEmailError("");
+                }}
+              />
+            </View>
+
+            {!!error && (
+              <ErrorBanner
+                message={error}
+                onDismiss={() => {
+                  setAuthFlow({ busy: false, error: "" });
+                }}
+              />
+            )}
+          </Card>
+        )}
       </Entrance>
+
+      {!isSignedIn && method === "options" && (
+        <View style={{ alignItems: "center", gap: 12, marginTop: 4 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
+            <Text style={{ fontSize: 13, color: theme.muted }}>
+              New to BLOOM MED?
+            </Text>
+            <Touch
+              label="Create account"
+              onPress={() => {
+                setMethod("email");
+                setIsSignUp(true);
+                setEmailError("");
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 13,
+                  color: theme.green,
+                  fontWeight: "700",
+                }}
+              >
+                Create account
+              </Text>
+            </Touch>
+          </View>
+          <Touch
+            label="Need help signing in?"
+            onPress={() => setHelpOpen(true)}
+          >
+            <Text style={{ fontSize: 13, color: theme.muted }}>
+              Need help signing in?
+            </Text>
+          </Touch>
+        </View>
+      )}
+
       <View
         style={{
-          flexDirection: "row",
-          justifyContent: "center",
           alignItems: "center",
-          gap: 6,
+          gap: 4,
+          marginTop: 14,
+          marginBottom: 16,
         }}
       >
-        <Icon name="shield-checkmark-outline" size={15} />
-        <Text style={{ fontSize: 12, color: theme.muted }}>
-          Private records � Connected care
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <Icon name="shield-checkmark-outline" size={15} color={theme.green} />
+          <Text style={{ fontSize: 12, color: theme.muted }}>
+            Your care, kept private.
+          </Text>
+        </View>
+        <Text style={{ fontSize: 11, color: theme.muted, fontWeight: "500" }}>
+          NoorAI Labs
         </Text>
       </View>
-      <Text style={{ textAlign: "center", color: theme.muted, fontSize: 12 }}>
-        NoorAI Labs · Your care, connected.
-      </Text>
+
+      <Modal
+        visible={helpOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setHelpOpen(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "#00000077",
+            justifyContent: "center",
+            padding: 24,
+          }}
+        >
+          <Card>
+            <Title small>Need help signing in?</Title>
+            <Body muted>
+              If you have trouble accessing your care space or haven&apos;t received
+              your verification code, our support team is available 24/7.
+            </Body>
+            <View
+              style={{
+                backgroundColor: "#F2F7F5",
+                padding: 14,
+                borderRadius: 12,
+                gap: 6,
+              }}
+            >
+              <Text
+                style={{ fontWeight: "700", color: theme.ink, fontSize: 13 }}
+              >
+                Care Coordinator Desk
+              </Text>
+              <Text style={{ fontSize: 13, color: theme.muted }}>
+                Email: support@bloommed.in
+              </Text>
+              <Text style={{ fontSize: 13, color: theme.muted }}>
+                Hours: 24/7 Priority Support
+              </Text>
+            </View>
+            <Button title="Got it" onPress={() => setHelpOpen(false)} />
+          </Card>
+        </View>
+      </Modal>
     </AuthLayout>
   );
 }
