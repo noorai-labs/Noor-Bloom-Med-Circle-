@@ -1,3 +1,4 @@
+import { providers } from "../provider-display";
 import React, { useState } from "react";
 import { Image, Platform, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -5,7 +6,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { useClinic } from "../store";
-import { dayKey, formatDate, id, providers } from "../clinic";
+import { dayKey, formatDate, id } from "../clinic";
 import {
   Body,
   Button,
@@ -23,12 +24,53 @@ import {
   Title,
   Touch,
 } from "../components";
+import {
+  ReminderSettings,
+  MedicineAlertTimes,
+} from "../medicine-reminder-controls";
 export function RecordsScreen() {
   const { state, dispatch, notify, cloud } = useClinic();
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState("Lab report");
+  const [access, setAccess] = useState<Awaited<
+    ReturnType<NonNullable<typeof cloud>["recordAccess"]>
+  > | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [pendingAccess, setPendingAccess] = useState<{
+    userId: string;
+    granted: boolean;
+  } | null>(null);
+  async function loadAccess() {
+    try {
+      setAccess(await cloud!.recordAccess());
+    } catch (e) {
+      notify(
+        e instanceof Error ? e.message : "Could not load sharing permissions.",
+      );
+    }
+  }
+  async function changeAccess(userId: string, granted: boolean) {
+    setAccessBusy(true);
+    try {
+      await cloud!.setRecordAccess(userId, granted);
+      await loadAccess();
+      notify(
+        granted
+          ? "Record access granted."
+          : "Record access revoked. Copies already shared outside the app cannot be recalled.",
+      );
+    } catch (e) {
+      notify(
+        e instanceof Error
+          ? e.message
+          : "Could not update sharing permissions.",
+      );
+    } finally {
+      setAccessBusy(false);
+    }
+  }
   async function addDocument() {
     setBusy(true);
     try {
@@ -100,6 +142,64 @@ export function RecordsScreen() {
       title="Your health folder"
       subtitle="A clearer picture of your care."
     >
+      {cloud && state.session?.role === "Patient" && (
+        <Card>
+          <Title small>Who can see your documents?</Title>
+          <Body muted>
+            Care-space membership alone does not share your uploaded documents.
+            Grant access only to people you trust.
+          </Body>
+          <Button
+            title="Review document sharing"
+            secondary
+            onPress={loadAccess}
+          />
+          {access?.length === 0 && (
+            <Body muted>No other care team members are assigned.</Body>
+          )}
+          {access?.map((member) => (
+            <View key={member.userId} style={{ gap: 8 }}>
+              <Label>{member.role}</Label>
+              <Body muted>{member.userId}</Body>
+              <Button
+                title={
+                  member.granted
+                    ? "Revoke document access"
+                    : "Grant document access"
+                }
+                secondary
+                disabled={accessBusy}
+                onPress={() => {
+                  setPendingAccess({
+                    userId: member.userId,
+                    granted: !member.granted,
+                  });
+                }}
+              />
+            </View>
+          ))}
+        </Card>
+      )}
+      <Confirm
+        visible={!!pendingAccess}
+        title={
+          pendingAccess?.granted
+            ? "Share your documents?"
+            : "Revoke document access?"
+        }
+        body={
+          pendingAccess?.granted
+            ? "This member will be able to view and download uploaded documents and permitted clinical history while their care-space access remains valid."
+            : "Future document requests will be blocked. Copies already downloaded or shared cannot be recalled."
+        }
+        confirm={pendingAccess?.granted ? "Grant access" : "Revoke access"}
+        onClose={() => setPendingAccess(null)}
+        onConfirm={() => {
+          if (pendingAccess)
+            void changeAccess(pendingAccess.userId, pendingAccess.granted);
+          setPendingAccess(null);
+        }}
+      />
       <Field
         label="Search records"
         value={search}
@@ -111,22 +211,32 @@ export function RecordsScreen() {
         value={filter}
         onChange={setFilter}
       />
-      {["All", "History"].includes(filter) && (
+      {cloud && !cloud.recordsAccessible && (
         <Card>
-          <View style={styles.row}>
-            <View style={styles.iconBox}>
-              <Icon name="pulse-outline" />
-            </View>
-            <Title small>Your health context</Title>
-          </View>
-          <Body>
-            Conditions: {state.profile.conditions || "None entered"}
-            {"\n"}Allergies: {state.profile.allergies || "None entered"}
-            {"\n"}Medicines: {state.profile.medicines || "None entered"}
+          <Title small>Health records are not shared with you</Title>
+          <Body muted>
+            Ask the patient to review health record sharing. Care-space
+            membership alone does not grant document access.
           </Body>
-          <Body muted>{state.profile.notes}</Body>
         </Card>
       )}
+      {(!cloud || cloud.recordsAccessible) &&
+        ["All", "History"].includes(filter) && (
+          <Card>
+            <View style={styles.row}>
+              <View style={styles.iconBox}>
+                <Icon name="pulse-outline" />
+              </View>
+              <Title small>Your health context</Title>
+            </View>
+            <Body>
+              Conditions: {state.profile.conditions || "None entered"}
+              {"\n"}Allergies: {state.profile.allergies || "None entered"}
+              {"\n"}Medicines: {state.profile.medicines || "None entered"}
+            </Body>
+            <Body muted>{state.profile.notes}</Body>
+          </Card>
+        )}
       {filter !== "Care plans" &&
         records.map((r) => (
           <Touch
@@ -156,7 +266,11 @@ export function RecordsScreen() {
                     {r.category} · {formatDate(r.date)}
                   </Body>
                   <Text style={{ color: theme.green, fontSize: 11 }}>
-                    {r.uri ? "Attachment saved" : "Sample record"}
+                    {r.fileId
+                      ? "Private cloud attachment"
+                      : r.uri
+                        ? "Attachment saved"
+                        : "Sample record"}
                   </Text>
                 </View>
                 <Icon name="chevron-forward" size={18} />
@@ -195,14 +309,17 @@ export function RecordsScreen() {
             )}
           </Card>
         ))}
-      {!records.length && !["History", "Care plans"].includes(filter) && (
-        <Empty
-          title="A fresh page"
-          body="Records matching this filter will appear here."
-          icon="folder-open-outline"
-        />
-      )}
-      {["Patient", "Admin"].includes(state.session?.role || "") && (
+      {(!cloud || cloud.recordsAccessible) &&
+        !records.length &&
+        !["History", "Care plans"].includes(filter) && (
+          <Empty
+            title="A fresh page"
+            body="Records matching this filter will appear here."
+            icon="folder-open-outline"
+          />
+        )}
+      {(state.session?.role === "Patient" ||
+        (!cloud && state.session?.role === "Admin")) && (
         <Card>
           <Title small>Add to your health story</Title>
           <Label>Document category</Label>
@@ -234,6 +351,34 @@ export function RecordScreen() {
   const [unavailable, setUnavailable] = useState(false);
   const [previewUri, setPreviewUri] = useState("");
   const [opening, setOpening] = useState(false);
+  const [share, setShare] = useState(false);
+  const [correcting, setCorrecting] = useState(false);
+  const [detail, setDetail] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [history, setHistory] = useState<Awaited<
+    ReturnType<NonNullable<typeof cloud>["recordHistory"]>
+  > | null>(null);
+  async function showHistory() {
+    try {
+      setHistory(await cloud!.recordHistory(recordId));
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Could not load history.");
+    }
+  }
+  async function saveCorrection() {
+    setSaving(true);
+    try {
+      await cloud!.amendRecord(recordId, detail, reason);
+      setCorrecting(false);
+      setHistory(null);
+      notify("Correction saved with amendment history.");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Could not save correction.");
+    } finally {
+      setSaving(false);
+    }
+  }
   async function open() {
     setOpening(true);
     try {
@@ -283,6 +428,77 @@ export function RecordScreen() {
           <Chip title={formatDate(record.date)} />
         </View>
         <Body>{record.detail}</Body>
+        <Body muted>
+          {record.provenance?.source ||
+            (cloud
+              ? "Legacy upload - source not verified"
+              : "Local demo record")}
+        </Body>
+        {record.provenance && (
+          <Body muted>
+            Added {record.provenance.createdAt} � Author:{" "}
+            {record.provenance.authorId} � Version {record.provenance.version}
+          </Body>
+        )}
+        {cloud && (
+          <Button
+            title="View correction history"
+            secondary
+            onPress={showHistory}
+          />
+        )}
+        {history?.map((item) => (
+          <View key={item.version} style={{ gap: 6 }}>
+            <Label>
+              VERSION {item.version} � {item.createdAt}
+            </Label>
+            <Body>{item.reason}</Body>
+            <Body muted>
+              {JSON.parse(item.metadata).detail || "No description"}
+            </Body>
+          </View>
+        ))}
+        {cloud && state.session?.role === "Patient" && (
+          <Button
+            title="Correct record description"
+            secondary
+            onPress={() => {
+              setDetail(record.detail);
+              setReason("");
+              setCorrecting(true);
+            }}
+          />
+        )}
+        {correcting && (
+          <View style={{ gap: 12 }}>
+            <Field
+              label="Corrected description"
+              value={detail}
+              onChange={setDetail}
+              multiline
+            />
+            <Field
+              label="Reason for correction"
+              value={reason}
+              onChange={setReason}
+            />
+            <Body muted>
+              The original file is unchanged. Earlier descriptions remain in
+              correction history.
+            </Body>
+            <Button
+              title="Save correction"
+              loading={saving}
+              disabled={!reason.trim() || saving}
+              onPress={saveCorrection}
+            />
+            <Button
+              title="Cancel correction"
+              secondary
+              onPress={() => setCorrecting(false)}
+            />
+          </View>
+        )}
         {(previewUri || record.uri) &&
           record.mime?.startsWith("image/") &&
           !unavailable && (
@@ -304,11 +520,12 @@ export function RecordScreen() {
             title={opening ? "Opening attachment…" : "Open / share attachment"}
             disabled={opening}
             icon="share-outline"
-            onPress={open}
+            onPress={() => setShare(true)}
           />
         )}
       </Card>
-      {["Patient", "Admin"].includes(state.session?.role || "") && (
+      {(state.session?.role === "Patient" ||
+        (!cloud && state.session?.role === "Admin")) && (
         <Button
           title="Remove this record"
           secondary
@@ -316,11 +533,22 @@ export function RecordScreen() {
         />
       )}
       <Confirm
+        visible={share}
+        title="Open or share this document?"
+        body="This opens your phone's share menu. Anyone you share it with may retain a copy outside BLOOM MED."
+        confirm="Continue"
+        onClose={() => setShare(false)}
+        onConfirm={() => {
+          setShare(false);
+          void open();
+        }}
+      />
+      <Confirm
         visible={remove}
         title="Remove this record?"
         body={
           cloud
-            ? "This removes the record and its cloud attachment for everyone in this care space. Your original selected document is unchanged."
+            ? "This removes the record and its cloud attachment from the care space. Correction metadata and security audit entries remain retained. Your original selected document is unchanged."
             : "This removes the record and its local copy from this app. Your original selected document is unchanged."
         }
         confirm="Remove record"
@@ -382,6 +610,7 @@ export function MedicinesScreen() {
           Follow your clinician’s prescribed dosage and schedule.
         </Body>
       </Card>
+      {state.session?.role === "Patient" && <ReminderSettings />}
       {meds.map((m) => (
         <Card key={m.id}>
           <View style={styles.row}>
@@ -450,6 +679,9 @@ export function MedicinesScreen() {
             })}
           </View>
           <Body muted>Past 7 days · Green: taken · Amber: skipped</Body>
+          {state.session?.role === "Patient" && (
+            <MedicineAlertTimes medicine={m} />
+          )}
         </Card>
       ))}
       {!meds.length && (
@@ -509,8 +741,9 @@ export function MedicinesScreen() {
         </>
       )}
       <Body muted>
-        Daily status is saved by date. Reminders appear in your in-app routine;
-        background push notifications are not enabled.
+        Daily status is saved by date. Enable phone notifications above to
+        receive alerts at your selected times. Only mark a dose taken after you
+        have taken it.
       </Body>
       <Confirm
         visible={!!archive}

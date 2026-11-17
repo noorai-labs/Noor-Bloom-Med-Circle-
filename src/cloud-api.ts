@@ -4,6 +4,7 @@ export type CloudSnapshot = {
   state: ClinicState;
   revision: number;
   spaceId: string;
+  recordsAccess?: boolean;
 };
 export type CareSpace = {
   id: string;

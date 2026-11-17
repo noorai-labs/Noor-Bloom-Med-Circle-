@@ -15,6 +15,8 @@ export function cloudTransition(
       next.visits.find((v) => v.id.includes(operationId)) ||
       next.visits[next.visits.length - 1];
     newVisit.status = "Requested";
+    const act = next.activities.find((a) => a.visitId === newVisit.id);
+    if (act) act.title = "Care request sent";
   }
   return next;
 }

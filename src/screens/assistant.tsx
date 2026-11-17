@@ -1,8 +1,10 @@
+import { cloudMode } from "../cloud-config";
+import { providerFor } from "../provider-display";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
-import { formatDate, providerFor, visibleVisits } from "../clinic";
+import { formatDate, visibleVisits } from "../clinic";
 import {
   Body,
   Button,
@@ -17,6 +19,30 @@ import {
   Touch,
 } from "../components";
 export default function AssistantScreen() {
+  if (cloudMode)
+    return (
+      <Screen title="Care navigation">
+        <Card>
+          <Title small>Open your care workspace</Title>
+          <Body>
+            Use your appointments, records and medicines directly. The assistant
+            is not connected.
+          </Body>
+          <Button
+            title="Open appointments"
+            onPress={() => router.push("/(tabs)/appointments")}
+          />
+          <Button
+            title="Open records"
+            secondary
+            onPress={() => router.push("/(tabs)/records")}
+          />
+        </Card>
+      </Screen>
+    );
+  return <DemoAssistantScreen />;
+}
+function DemoAssistantScreen() {
   const { state } = useClinic();
   const [messages, setMessages] = useState([
     {
