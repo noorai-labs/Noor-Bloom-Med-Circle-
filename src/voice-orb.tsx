@@ -80,7 +80,7 @@ export function VoiceOrbModal({
                 <VoicePoweredOrb key={micAttempt} size={190} bg="#070C14" enableVoiceControl={visible} onMicStatus={setMicStatus} />
               </View>
 
-              <Text style={orbStyles.listeningText}>
+              <Text accessibilityLiveRegion="polite" style={orbStyles.listeningText}>
                 {Platform.OS !== "web"
                   ? "Visual-only orb · Voice control is unavailable on this device"
                   : micStatus === "error"
