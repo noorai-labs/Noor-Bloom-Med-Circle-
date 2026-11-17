@@ -108,23 +108,24 @@ export function RecordsScreen() {
               <Icon name="shield-checkmark-outline" color={theme.green} />
             </View>
             <View style={{ flex: 1 }}>
-              <Title small>Care-team record access</Title>
+              <Title small>Care-team & family record access</Title>
               <Body muted>
-                Allow attending doctors and nurses to review your uploaded health records.
+                Allow attending doctors, nurses, and family members to review your uploaded health records.
               </Body>
             </View>
             <Switch
-              accessibilityLabel="Care-team record access consent"
+              accessibilityLabel="Care-team and family record access consent"
               value={state.profile.consent}
               trackColor={{ false: "#D9E2E5", true: theme.green }}
               onValueChange={(consent) => {
-                dispatch({
+                const ok = dispatch({
                   type: "profile",
                   profile: { ...state.profile, consent },
                 });
+                if (!ok) return;
                 notify(
                   consent
-                    ? "Care-team access granted for your health records."
+                    ? "Care-team and family access granted for your health records."
                     : "Care-team access restricted.",
                 );
               }}
@@ -132,8 +133,8 @@ export function RecordsScreen() {
           </View>
           <Body muted>
             {state.profile.consent
-              ? "Access granted · Attending clinicians can review your health records during visits."
-              : "Private · Attending clinicians cannot view your uploaded documents until access is granted."}
+              ? "Access granted · Attending clinicians and family members can review your health records."
+              : "Private · Attending clinicians and family members cannot view your uploaded documents until access is granted."}
           </Body>
         </Card>
       )}
@@ -234,18 +235,23 @@ export function RecordsScreen() {
             )}
           </Card>
         ))}
-      {!records.length && !["History", "Care plans"].includes(filter) && (
-        <Empty
-          title={
-            hasRecords ? "No matching records found" : "No health records yet"
-          }
-          body={
-            hasRecords
-              ? "Try adjusting your search query or category filter to find what you need."
-              : "Keep all your lab reports, prescriptions, and health summaries organized in one secure place."
-          }
-          icon="folder-open-outline"
-        />
+      {cloud && !cloud.recordsAccessible && ["Lab report", "Prescription"].includes(filter) ? (
+        <Body muted>Health records are not shared with you.</Body>
+      ) : (
+        !records.length &&
+        !["History", "Care plans"].includes(filter) && (
+          <Empty
+            title={
+              hasRecords ? "No matching records found" : "No health records yet"
+            }
+            body={
+              hasRecords
+                ? "Try adjusting your search query or category filter to find what you need."
+                : "Keep all your lab reports, prescriptions, and health summaries organized in one secure place."
+            }
+            icon="folder-open-outline"
+          />
+        )
       )}
       {(state.session?.role === "Patient" || (!cloud && state.session?.role === "Admin")) && (
         <Card>
@@ -370,11 +376,11 @@ export function RecordScreen() {
               <Icon name="shield-checkmark-outline" color={theme.green} />
             </View>
             <View style={{ flex: 1 }}>
-              <Title small>Care-team record access</Title>
+              <Title small>Care-team & family record access</Title>
               <Body muted>
                 {state.profile.consent
-                  ? "Care team members can review your health records."
-                  : "Private to you. Attending clinicians cannot review your records."}
+                  ? "Care team and family members can review your health records."
+                  : "Private to you. Attending clinicians and family members cannot review your records."}
               </Body>
             </View>
             <Switch
@@ -382,13 +388,14 @@ export function RecordScreen() {
               value={state.profile.consent}
               trackColor={{ false: "#D9E2E5", true: theme.green }}
               onValueChange={(consent) => {
-                dispatch({
+                const ok = dispatch({
                   type: "profile",
                   profile: { ...state.profile, consent },
                 });
+                if (!ok) return;
                 notify(
                   consent
-                    ? "Care-team access granted."
+                    ? "Care-team and family access granted."
                     : "Care-team access restricted.",
                 );
               }}
