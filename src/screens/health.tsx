@@ -67,7 +67,9 @@ export function RecordsScreen() {
             fileId,
             detail: cloud
               ? "Private cloud attachment. Available to authorized members of this care space."
-              : "Stored on this device.",
+              : uri
+                ? "Stored on this device."
+                : "Only document metadata is saved. The attachment is not stored.",
           },
         })
       )
