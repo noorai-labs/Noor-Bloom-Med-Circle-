@@ -169,7 +169,9 @@ export function Entrance({
         gap: 18,
       }}
     >
-      {children}
+      {React.Children.map(children, (child) =>
+        typeof child === "string" && !child.trim() ? null : child,
+      )}
     </Animated.View>
   );
 }

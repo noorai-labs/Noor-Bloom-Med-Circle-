@@ -181,6 +181,88 @@ async function main() {
     visitId: visit.id,
     status: "Completed",
   });
+  // 1. Negative test: Rescheduling a completed visit is rejected
+  const rescheduleCompleted = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: {
+      type: "reschedule",
+      visitId: visit.id,
+      date: day,
+      time: "11:30 AM",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(rescheduleCompleted.status, 400);
+  assert.equal(
+    rescheduleCompleted.data.error,
+    "Only upcoming visits can be rescheduled.",
+  );
+
+  // 2. Negative test: Patient cannot mark a visit as Confirmed or Completed
+  const patientStatusUpdate = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: {
+      type: "status",
+      visitId: visit.id,
+      status: "Confirmed",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(patientStatusUpdate.status, 400);
+
+  // 3. Negative test: Doctor cannot modify a visit assigned to a different provider
+  await db
+    .prepare(
+      "INSERT INTO memberships (user_id,space_id,role,provider_id) VALUES (?,?,?,?)",
+    )
+    .bind("user_doctor_other", space, "Doctor", "2")
+    .run();
+  const crossDoctorUpdate = await request(
+    "user_doctor_other",
+    endpoint,
+    "POST",
+    {
+      revision,
+      action: {
+        type: "status",
+        visitId: visit.id,
+        status: "In Progress",
+      },
+      operationId: randomUUID(),
+    },
+  );
+  assert.equal(crossDoctorUpdate.status, 400);
+  assert.equal(
+    crossDoctorUpdate.data.error,
+    "This visit belongs to another care professional.",
+  );
+
+  // 4. Defect reproduction: Booking a second visit must NOT corrupt historical visit status
+  const date2 = new Date();
+  date2.setDate(date2.getDate() + 4);
+  const day2 = date2.toISOString().slice(0, 10);
+  state = await mutate("user_patient", {
+    type: "book",
+    visit: {
+      providerId: "1",
+      date: day2,
+      time: "11:30 AM",
+      service: "Home Visit",
+      frequency: "One visit",
+      address: "Test address",
+      reason: "Second checkup",
+    },
+  });
+  assert.equal(state.visits.length, 2);
+  assert.equal(
+    state.visits.find((v) => v.id === visit.id)?.status,
+    "Completed",
+    "Regression: historical visit was corrupted back to Requested!",
+  );
+  assert.equal(
+    state.visits[state.visits.length - 1].status,
+    "Requested",
+  );
   await mutate("user_patient", {
     type: "dose",
     medicineId: state.medicines[0].id,

@@ -10,6 +10,11 @@ export function cloudTransition(
     action,
     (prefix) => `${prefix}-${operationId}-${++count}`,
   );
-  if (action.type === "book") next.visits[0].status = "Requested";
+  if (action.type === "book" && next.visits.length) {
+    const newVisit =
+      next.visits.find((v) => v.id.includes(operationId)) ||
+      next.visits[next.visits.length - 1];
+    newVisit.status = "Requested";
+  }
   return next;
 }
