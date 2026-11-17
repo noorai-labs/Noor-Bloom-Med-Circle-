@@ -4,7 +4,7 @@
 **Owner:** Roshan Shariff  
 **Target Branch:** `feature/roshan/voice-pipeline-design`  
 **Status:** In Review (Week 1 Deliverable)  
-**Date:** 16 November 2026  
+**Date:** 16 November 2026 (Updated: 17 November 2026)  
 
 ---
 
@@ -78,13 +78,22 @@ India's multilingual context requires explicit language declaration and automati
 
 ---
 
-## 4. Audio Capture Contract
+## 4. Audio Capture Contract & Upload Specifications
 
-### 4.1 Client Specifications
-* **Module:** Built using cross-platform audio capture abstractions compatible with Expo CNG (Continuous Native Generation).
-* **Sample Rate:** `16,000 Hz` (optimal balance between STT accuracy and low network payload).
-* **Bit Depth:** 16-bit Mono PCM or compressed AAC.
-* **Duration Limiter:** Maximum `12 seconds` with automatic Silence Detection (Voice Activity Detection - VAD) to cut off when the patient finishes speaking.
+To prevent payload mismatches between heterogeneous mobile devices and the backend STT service, this pipeline establishes a strict distinction between **Device Capture** and the **Upload Contract**:
+
+### 4.1 Device Capture Formats
+* **Primary Mobile Capture (Android / iOS):** 16,000 Hz, Mono, 16-bit Linear PCM wrapped in a standard WAV container (`audio/wav`).
+* **Web Client Capture:** 16,000 Hz Mono Opus-compressed WebM container (`audio/webm;codecs=opus`).
+* **Low-Power / Fallback Capture:** Where hardware limitations require AAC recording, the client audio layer normalizes/transcodes the buffer to 16kHz Mono WAV before transmission.
+
+### 4.2 Backend Upload Contract (`/v1/voice/transcribe`)
+The backend ingestion endpoint (`/v1/voice/transcribe`) accepts multipart form data with the following strict contract:
+* **Accepted MIME Types (`uploadFormat`):**
+  1. `audio/wav`: 16,000 Hz sample rate, 1 channel (Mono), 16-bit signed integer Linear PCM.
+  2. `audio/webm`: WebM container with Opus audio encoding (browser environments).
+* **Payload Size Limit:** Ephemeral buffer strictly capped at 2.5 MB (sufficient for up to 15 seconds of uncompressed 16kHz 16-bit mono PCM).
+* **Duration Limiter:** Maximum `12 seconds` with automatic Silence Detection (Voice Activity Detection - VAD) to stop recording when speech ceases.
 * **State Management:**
   * `idle` $\rightarrow$ `listening` (pulsing emerald visualizer) $\rightarrow$ `processing` (subtle spinner) $\rightarrow$ `speaking` $\rightarrow$ `idle`.
 
@@ -104,7 +113,7 @@ India's multilingual context requires explicit language declaration and automati
 | *"Emergency / I need help right now"* | `EMERGENCY_SOS` | Triggers `/sos` modal | *"Opening Emergency Support. Tap to confirm emergency contacts."* |
 
 ### 5.2 Strict Medical Guardrail Policy
-If an intent is classified as asking for medical advice, prescription changes, or diagnosis:
+If an intent is classified as asking for medical advice, prescription changes, or diagnosis (intent: `MEDICAL_QUERY_REFUSAL` or `isMedicalQuery: true`):
 1. The pipeline **must not** synthesize medical advice.
 2. It returns a standardized disclaimer:
    > *"BLOOM MED Voice Assistant is a navigation and care-coordination tool, not a doctor. We cannot recommend medications, alter dosages, or evaluate symptoms."*

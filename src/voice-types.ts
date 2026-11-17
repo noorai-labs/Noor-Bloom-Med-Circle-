@@ -30,12 +30,16 @@ export type VoiceIntentType =
   | "QUERY_MEDICINES_TODAY"
   | "QUERY_RECORDS_COUNT"
   | "EMERGENCY_SOS"
+  | "MEDICAL_QUERY_REFUSAL"
   | "UNKNOWN_INTENT";
+
+export type AudioUploadFormat = "audio/wav" | "audio/webm";
 
 export interface VoiceCaptureConfig {
   sampleRate: number;
   channels: number;
-  encoding: "pcm_16bit" | "aac" | "webm";
+  captureEncoding: "pcm_16bit" | "aac" | "webm";
+  uploadFormat: AudioUploadFormat;
   maxDurationSeconds: number;
 }
 
@@ -64,7 +68,12 @@ export type VoicePipelineStatus =
   | "error";
 
 export interface VoicePipelineError {
-  code: "PERMISSION_DENIED" | "NETWORK_TIMEOUT" | "AUDIO_EMPTY" | "STT_FAILED" | "UNRECOGNIZED_INTENT";
+  code:
+    | "PERMISSION_DENIED"
+    | "NETWORK_TIMEOUT"
+    | "AUDIO_EMPTY"
+    | "STT_FAILED"
+    | "UNRECOGNIZED_INTENT";
   message: string;
   retryable: boolean;
 }
