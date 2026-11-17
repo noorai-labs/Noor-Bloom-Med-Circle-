@@ -422,7 +422,7 @@ function GeneralHomeScreen() {
                 button="Open my visits"
                 onPress={() => router.push("/(tabs)/appointments")}
               />
-              <View style={styles.row}>
+              <View style={[styles.row, { flexWrap: "wrap" }]}>
                 {[
                   [
                     "Upcoming",

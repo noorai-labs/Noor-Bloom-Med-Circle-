@@ -333,8 +333,8 @@ export function InboxScreen() {
           title="No activity updates yet"
           body="Appointment confirmations, medicine reminders, and care notes will appear here."
           icon="notifications-outline"
-          action="Find care"
-          onPress={() => router.push("/discover")}
+          action={["Patient", "Family"].includes(state.session?.role || "") ? "Find care" : undefined}
+          onPress={["Patient", "Family"].includes(state.session?.role || "") ? () => router.push("/discover") : undefined}
         />
       )}
     </Screen>

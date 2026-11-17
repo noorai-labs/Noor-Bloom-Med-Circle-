@@ -629,7 +629,7 @@ function GeneralAppointmentsScreen() {
           }
         />
       )}
-      {list.length > 0 && ["Patient", "Family"].includes(state.session?.role || "") && (
+      {(list.length > 0 || hasHistory) && ["Patient", "Family"].includes(state.session?.role || "") && (
         <Button
           title="Book another care moment"
           icon="add"

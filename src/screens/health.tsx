@@ -112,7 +112,9 @@ export function RecordsScreen() {
         value={filter}
         onChange={setFilter}
       />
-      {["All", "History"].includes(filter) && (
+      {["All", "History"].includes(filter) && (cloud && !cloud.recordsAccessible ? (
+        <Body muted>Health records are not shared with you.</Body>
+      ) : (
         <Card>
           <View style={styles.row}>
             <View style={styles.iconBox}>
@@ -127,7 +129,7 @@ export function RecordsScreen() {
           </Body>
           <Body muted>{state.profile.notes}</Body>
         </Card>
-      )}
+      ))}
       {filter !== "Care plans" &&
         records.map((r) => (
           <Touch
@@ -157,7 +159,7 @@ export function RecordsScreen() {
                     {r.category} · {formatDate(r.date)}
                   </Body>
                   <Text style={{ color: theme.green, fontSize: 11 }}>
-                    {r.uri ? "Attachment saved" : "Sample record"}
+                    {r.uri || r.fileId ? "Attachment saved" : "Sample record"}
                   </Text>
                 </View>
                 <Icon name="chevron-forward" size={18} />
@@ -209,7 +211,7 @@ export function RecordsScreen() {
           icon="folder-open-outline"
         />
       )}
-      {["Patient", "Admin"].includes(state.session?.role || "") && (
+      {(state.session?.role === "Patient" || (!cloud && state.session?.role === "Admin")) && (
         <Card>
           <Title small>Add to your health story</Title>
           <Label>Document category</Label>
@@ -318,7 +320,7 @@ export function RecordScreen() {
           />
         )}
       </Card>
-      {["Patient", "Admin"].includes(state.session?.role || "") && (
+      {(state.session?.role === "Patient" || (!cloud && state.session?.role === "Admin")) && (
         <Button
           title="Remove this record"
           secondary

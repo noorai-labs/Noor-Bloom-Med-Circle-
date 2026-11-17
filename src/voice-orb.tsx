@@ -1,5 +1,5 @@
-import React from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import React, { useState } from "react";
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { VoicePoweredOrb } from "../components/ui/voice-powered-orb";
 import { Icon, Touch } from "./components";
@@ -43,6 +43,8 @@ export function VoiceOrbModal({
   onCommand: (text: string) => void;
   language?: string;
 }) {
+  const [micStatus, setMicStatus] = useState<"idle" | "pending" | "active" | "error">("idle");
+  const [micAttempt, setMicAttempt] = useState(0);
   return (
     <Modal
       visible={visible}
@@ -71,16 +73,31 @@ export function VoiceOrbModal({
             <View style={orbStyles.content}>
               <Text style={orbStyles.title}>Voice Assistant</Text>
               <Text style={orbStyles.subtitle}>
-                Voice visualizer ({language}) · Tap a care request to begin
+                {Platform.OS === "web" ? "Voice visualizer" : "Visual orb"} ({language}) · Tap a care request to begin
               </Text>
 
               <View style={orbStyles.orbContainer}>
-                <VoicePoweredOrb size={190} bg="#070C14" enableVoiceControl={true} />
+                <VoicePoweredOrb key={micAttempt} size={190} bg="#070C14" enableVoiceControl={visible} onMicStatus={setMicStatus} />
               </View>
 
               <Text style={orbStyles.listeningText}>
-                Audio-reactive orb · Select a request below
+                {Platform.OS !== "web"
+                  ? "Visual-only orb · Voice control is unavailable on this device"
+                  : micStatus === "error"
+                    ? "Microphone access failed. Check permission and try again."
+                    : micStatus === "active"
+                      ? "Audio-reactive orb · Select a request below"
+                      : "Initializing microphone…"}
               </Text>
+
+              {Platform.OS === "web" && micStatus === "error" && (
+                <Touch label="Retry microphone" onPress={() => {
+                  setMicStatus("pending");
+                  setMicAttempt((attempt) => attempt + 1);
+                }}>
+                  <Text style={orbStyles.commandText}>Retry microphone</Text>
+                </Touch>
+              )}
 
               <View style={orbStyles.commandsList}>
                 {[

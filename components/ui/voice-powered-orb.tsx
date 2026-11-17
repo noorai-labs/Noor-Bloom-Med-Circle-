@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   Pressable,
   StyleProp,
@@ -26,9 +26,14 @@ export interface VoicePoweredOrbProps {
 export function VoicePoweredOrb({
   size = 180,
   enableVoiceControl = false,
+  onMicStatus,
   onPress,
   style,
 }: VoicePoweredOrbProps) {
+  useEffect(() => {
+    onMicStatus?.(enableVoiceControl ? "error" : "idle");
+  }, [enableVoiceControl, onMicStatus]);
+
   const htmlContent = useMemo(() => {
     const rotSpeed = enableVoiceControl ? 0.65 : 0.35;
     const hoverVal = enableVoiceControl ? 0.7 : 0.35;

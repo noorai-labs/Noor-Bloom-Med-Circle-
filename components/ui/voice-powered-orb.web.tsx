@@ -257,10 +257,11 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
 
   // Initialize microphone access
   const initMicrophone = async () => {
+    let currentSession: number | undefined;
     try {
       // Clean up any existing microphone first
       stopMicrophone();
-      const currentSession = ++sessionIdRef.current;
+      currentSession = ++sessionIdRef.current;
       onMicStatus?.("pending");
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -292,11 +293,11 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       // Recheck session ownership after resume
       if (currentSession !== sessionIdRef.current) {
         stream.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
+        if (mediaStreamRef.current === stream) mediaStreamRef.current = null;
         if (audioCtx.state !== 'closed') {
           audioCtx.close().catch(() => {});
         }
-        audioContextRef.current = null;
+        if (audioContextRef.current === audioCtx) audioContextRef.current = null;
         return false;
       }
 
@@ -317,7 +318,10 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       return true;
     } catch (error) {
       console.warn("Microphone access denied or not available:", error);
-      onMicStatus?.("error");
+      if (currentSession === sessionIdRef.current) {
+        stopMicrophone();
+        onMicStatus?.("error");
+      }
       return false;
     }
   };
@@ -484,6 +488,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       };
     }
   }, [
+    size,
     hue,
     enableVoiceControl,
     voiceSensitivity,

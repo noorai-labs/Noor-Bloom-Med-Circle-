@@ -25,6 +25,7 @@ import {
 import { setAuthFlow, useAuthFlow } from "../auth-flow";
 import { GentleMotion } from "../welcome";
 import { AuthLayout } from "../auth-layout";
+import { createEmailAccount, sendEmailCode, verifyEmailCode, type EmailAttempt } from "../email-auth";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -44,6 +45,7 @@ export function GoogleLogin() {
   const [emailSubmitting, setEmailSubmitting] = useState(false);
   const [emailError, setEmailError] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
+  const [emailAttempt, setEmailAttempt] = useState<EmailAttempt | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
   const expoGo =
@@ -146,45 +148,12 @@ export function GoogleLogin() {
     setEmailError("");
     setSubmittedEmail(cleanEmail);
     try {
-      if (isSignUp) {
-        await clerk.client.signUp.create({ emailAddress: cleanEmail });
-        await clerk.client.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
-        if (sendRequestIdRef.current === reqId) {
-          setMethod("email_otp");
-        }
-      } else {
-        try {
-          const attempt = await clerk.client.signIn.create({ identifier: cleanEmail });
-          const factor = attempt.supportedFirstFactors?.find(
-            (f) => f.strategy === "email_code"
-          );
-          if (factor && "emailAddressId" in factor && factor.emailAddressId) {
-            await clerk.client.signIn.prepareFirstFactor({
-              strategy: "email_code",
-              emailAddressId: factor.emailAddressId as string,
-            });
-            if (sendRequestIdRef.current === reqId) {
-              setMethod("email_otp");
-            }
-          } else {
-            if (sendRequestIdRef.current === reqId) {
-              setEmailError("Email code verification is not supported for this account.");
-            }
-          }
-        } catch (err: unknown) {
-          const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
-          const code = clerkErr?.errors?.[0]?.code;
-          if (code === "form_identifier_not_found") {
-            await clerk.client.signUp.create({ emailAddress: cleanEmail });
-            await clerk.client.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
-            if (sendRequestIdRef.current === reqId) {
-              setIsSignUp(true);
-              setMethod("email_otp");
-            }
-          } else {
-            throw err;
-          }
-        }
+      const attempt = isSignUp
+        ? await createEmailAccount(clerk.client.signUp, cleanEmail)
+        : await sendEmailCode(clerk.client.signIn, clerk.client.signUp, cleanEmail);
+      if (sendRequestIdRef.current === reqId) {
+        setEmailAttempt(attempt);
+        setMethod("email_otp");
       }
     } catch (err: unknown) {
       if (sendRequestIdRef.current === reqId) {
@@ -205,39 +174,14 @@ export function GoogleLogin() {
   async function handleVerifyEmailCode(targetCode?: string) {
     if (emailSubmitting) return;
     const cleanCode = (typeof targetCode === "string" ? targetCode : otpCode).trim();
-    if (cleanCode.length < 6) {
-      setEmailError("Enter the 6-digit verification code.");
-      return;
-    }
     setEmailSubmitting(true);
     setEmailError("");
     try {
-      if (isSignUp) {
-        const res = await clerk.client.signUp.attemptEmailAddressVerification({ code: cleanCode });
-        if (res.status === "complete" && res.createdSessionId) {
-          await clerk.setActive({ session: res.createdSessionId });
-        } else if (res.status === "missing_requirements") {
-          setEmailError(
-            "Account setup requires additional details. Please sign in with Google to finish registration."
-          );
-        } else {
-          setEmailError("Verification incomplete. Please check code.");
-        }
-      } else {
-        const res = await clerk.client.signIn.attemptFirstFactor({
-          strategy: "email_code",
-          code: cleanCode,
-        });
-        if (res.status === "complete" && res.createdSessionId) {
-          await clerk.setActive({ session: res.createdSessionId });
-        } else if (res.status === "needs_second_factor") {
-          setEmailError(
-            "Two-step verification is enabled for this account. Please use Google sign-in to authenticate."
-          );
-        } else {
-          setEmailError("Sign in incomplete. Please check code.");
-        }
-      }
+      if (!emailAttempt) throw new Error("Request an email code first.");
+      const session = await verifyEmailCode(
+        clerk.client.signIn, clerk.client.signUp, emailAttempt, cleanCode,
+      );
+      await clerk.setActive({ session });
     } catch (err: unknown) {
       const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
       const msg =
@@ -565,6 +509,7 @@ export function GoogleLogin() {
             </Text>
             <Touch
               label="Create account"
+              disabled={busy}
               onPress={() => {
                 setMethod("email");
                 setIsSignUp(true);
