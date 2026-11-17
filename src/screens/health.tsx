@@ -29,7 +29,6 @@ export function RecordsScreen() {
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState("Lab report");
-  const [grantClinicianAccess, setGrantClinicianAccess] = useState(true);
   async function addDocument() {
     setBusy(true);
     try {
@@ -56,12 +55,6 @@ export function RecordsScreen() {
         new File(asset.uri).copy(destination);
         uri = destination.uri;
       }
-      if (grantClinicianAccess && !state.profile.consent) {
-        dispatch({
-          type: "profile",
-          profile: { ...state.profile, consent: true },
-        });
-      }
       if (
         dispatch({
           type: "record",
@@ -74,9 +67,7 @@ export function RecordsScreen() {
             fileId,
             detail: cloud
               ? "Private cloud attachment. Available to authorized members of this care space."
-              : grantClinicianAccess
-                ? "Stored on this device. Clinician access granted for your attending care team."
-                : "Stored on this device. Private to patient.",
+              : "Stored on this device.",
           },
         })
       )
@@ -263,18 +254,6 @@ export function RecordsScreen() {
             value={category}
             onChange={setCategory}
           />
-          <View style={[styles.row, { paddingVertical: 4 }]}>
-            <View style={{ flex: 1 }}>
-              <Body>Grant care-team access</Body>
-              <Body muted>Allow clinicians to view this new document</Body>
-            </View>
-            <Switch
-              accessibilityLabel="Grant care-team access to this document"
-              value={grantClinicianAccess}
-              trackColor={{ false: "#D9E2E5", true: theme.green }}
-              onValueChange={setGrantClinicianAccess}
-            />
-          </View>
           <Button
             title="Choose a document"
             icon="cloud-upload-outline"
@@ -350,7 +329,6 @@ export function RecordScreen() {
           <Chip title={formatDate(record.date)} />
           <Chip
             title={
-              record.detail?.includes("Clinician access granted") ||
               state.profile.consent
                 ? "Care team access granted"
                 : "Private"
@@ -390,7 +368,7 @@ export function RecordScreen() {
               <Icon name="shield-checkmark-outline" color={theme.green} />
             </View>
             <View style={{ flex: 1 }}>
-              <Title small>Clinician access</Title>
+              <Title small>Care-team record access</Title>
               <Body muted>
                 {state.profile.consent
                   ? "Care team members can review your health records."
@@ -398,7 +376,7 @@ export function RecordScreen() {
               </Body>
             </View>
             <Switch
-              accessibilityLabel="Toggle clinician access"
+              accessibilityLabel="Care-team record access consent"
               value={state.profile.consent}
               trackColor={{ false: "#D9E2E5", true: theme.green }}
               onValueChange={(consent) => {
