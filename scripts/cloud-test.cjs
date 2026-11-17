@@ -339,7 +339,7 @@ async function main() {
   state = await mutate("user_patient", {
     type: "book",
     visit: {
-      providerId: "1",
+      providerId: "2",
       date: day2,
       time: "11:30 AM",
       service: "Home Visit",
@@ -354,9 +354,35 @@ async function main() {
     "Completed",
     "Regression: historical visit was corrupted back to Requested!",
   );
+  const secondVisit = state.visits[state.visits.length - 1];
+  assert.equal(secondVisit.status, "Requested");
+  assert.equal(state.activities[0].title, "Care request sent");
+
+  // Verify target-visit authorization: Doctor 2 is now admitted (has visit 2),
+  // but attempting an action on Doctor 1's visit must be rejected by target-visit checks.
+  const admittedState = await request(
+    "user_doctor_other",
+    "/v1/state?space=" + space,
+  );
+  assert.equal(admittedState.status, 200);
+  const crossVisitUpdate = await request(
+    "user_doctor_other",
+    endpoint,
+    "POST",
+    {
+      revision,
+      action: {
+        type: "status",
+        visitId: visit.id,
+        status: "In Progress",
+      },
+      operationId: randomUUID(),
+    },
+  );
+  assert.equal(crossVisitUpdate.status, 400);
   assert.equal(
-    state.visits[state.visits.length - 1].status,
-    "Requested",
+    crossVisitUpdate.data.error,
+    "This visit belongs to another care professional.",
   );
   await mutate("user_patient", {
     type: "dose",
@@ -821,13 +847,13 @@ async function main() {
     200,
   );
   const timedDevice = { ...device, id: randomUUID(), timezone: "UTC" };
+  const sentBeforeSchedule = pushes.length;
   await request("user_patient", devicePath, "POST", timedDevice);
   await db
     .prepare("UPDATE reminder_devices SET active_since=? WHERE id=?")
     .bind(Date.now() - 180000, timedDevice.id)
     .run();
   await request("user_patient", devicePath, "POST", timedDevice);
-  const sentBeforeSchedule = pushes.length;
   await until(() => pushes.length === sentBeforeSchedule + 1);
   assert.equal(pushes.at(-1).data.medicineId, med.id);
   assert.ok(!pushes.at(-1).body.includes(med.name));
