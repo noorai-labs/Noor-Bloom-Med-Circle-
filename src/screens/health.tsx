@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Image, Platform, Text, View } from "react-native";
+import { Image, Platform, Switch, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import { Directory, File, Paths } from "expo-file-system";
@@ -29,6 +29,7 @@ export function RecordsScreen() {
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
   const [category, setCategory] = useState("Lab report");
+  const [grantClinicianAccess, setGrantClinicianAccess] = useState(true);
   async function addDocument() {
     setBusy(true);
     try {
@@ -55,6 +56,12 @@ export function RecordsScreen() {
         new File(asset.uri).copy(destination);
         uri = destination.uri;
       }
+      if (grantClinicianAccess && !state.profile.consent) {
+        dispatch({
+          type: "profile",
+          profile: { ...state.profile, consent: true },
+        });
+      }
       if (
         dispatch({
           type: "record",
@@ -67,9 +74,9 @@ export function RecordsScreen() {
             fileId,
             detail: cloud
               ? "Private cloud attachment. Available to authorized members of this care space."
-              : uri
-                ? "Stored on this device. Your demo care team can open the attachment."
-                : "Browser preview contains metadata only. Use the native app to store and share files.",
+              : grantClinicianAccess
+                ? "Stored on this device. Clinician access granted for your attending care team."
+                : "Stored on this device. Private to patient.",
           },
         })
       )
@@ -101,6 +108,42 @@ export function RecordsScreen() {
       title="Your health folder"
       subtitle="A clearer picture of your care."
     >
+      {state.session?.role === "Patient" && (
+        <Card>
+          <View style={styles.row}>
+            <View style={[styles.iconBox, { backgroundColor: theme.mint }]}>
+              <Icon name="shield-checkmark-outline" color={theme.green} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Title small>Care-team record access</Title>
+              <Body muted>
+                Allow attending doctors and nurses to review your uploaded health records.
+              </Body>
+            </View>
+            <Switch
+              accessibilityLabel="Care-team record access consent"
+              value={state.profile.consent}
+              trackColor={{ false: "#D9E2E5", true: theme.green }}
+              onValueChange={(consent) => {
+                dispatch({
+                  type: "profile",
+                  profile: { ...state.profile, consent },
+                });
+                notify(
+                  consent
+                    ? "Care-team access granted for your health records."
+                    : "Care-team access restricted.",
+                );
+              }}
+            />
+          </View>
+          <Body muted>
+            {state.profile.consent
+              ? "Access granted · Attending clinicians can review your health records during visits."
+              : "Private · Attending clinicians cannot view your uploaded documents until access is granted."}
+          </Body>
+        </Card>
+      )}
       <Field
         label="Search records"
         value={search}
@@ -220,6 +263,18 @@ export function RecordsScreen() {
             value={category}
             onChange={setCategory}
           />
+          <View style={[styles.row, { paddingVertical: 4 }]}>
+            <View style={{ flex: 1 }}>
+              <Body>Grant care-team access</Body>
+              <Body muted>Allow clinicians to view this new document</Body>
+            </View>
+            <Switch
+              accessibilityLabel="Grant care-team access to this document"
+              value={grantClinicianAccess}
+              trackColor={{ false: "#D9E2E5", true: theme.green }}
+              onValueChange={setGrantClinicianAccess}
+            />
+          </View>
           <Button
             title="Choose a document"
             icon="cloud-upload-outline"
@@ -293,6 +348,14 @@ export function RecordScreen() {
         <View style={styles.wrap}>
           <Chip title={record.category} />
           <Chip title={formatDate(record.date)} />
+          <Chip
+            title={
+              record.detail?.includes("Clinician access granted") ||
+              state.profile.consent
+                ? "Care team access granted"
+                : "Private"
+            }
+          />
         </View>
         <Body>{record.detail}</Body>
         {(previewUri || record.uri) &&
@@ -320,6 +383,39 @@ export function RecordScreen() {
           />
         )}
       </Card>
+      {state.session?.role === "Patient" && (
+        <Card>
+          <View style={styles.row}>
+            <View style={[styles.iconBox, { backgroundColor: theme.mint }]}>
+              <Icon name="shield-checkmark-outline" color={theme.green} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Title small>Clinician access</Title>
+              <Body muted>
+                {state.profile.consent
+                  ? "Care team members can review your health records."
+                  : "Private to you. Attending clinicians cannot review your records."}
+              </Body>
+            </View>
+            <Switch
+              accessibilityLabel="Toggle clinician access"
+              value={state.profile.consent}
+              trackColor={{ false: "#D9E2E5", true: theme.green }}
+              onValueChange={(consent) => {
+                dispatch({
+                  type: "profile",
+                  profile: { ...state.profile, consent },
+                });
+                notify(
+                  consent
+                    ? "Care-team access granted."
+                    : "Care-team access restricted.",
+                );
+              }}
+            />
+          </View>
+        </Card>
+      )}
       {(state.session?.role === "Patient" || (!cloud && state.session?.role === "Admin")) && (
         <Button
           title="Remove this record"
