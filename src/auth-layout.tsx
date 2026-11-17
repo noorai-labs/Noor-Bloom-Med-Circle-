@@ -18,10 +18,15 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
   const focused = useRef<TextInput | null>(null);
   const offset = useRef(0);
   const keyboardTop = useRef<number | null>(null);
-  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retries = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+
+  const clearRetries = useCallback(() => {
+    retries.current.forEach(clearTimeout);
+    retries.current = [];
+  }, []);
 
   const revealFocused = useCallback(() => {
     const field = focused.current;
@@ -42,10 +47,11 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
           top + viewportHeight,
           keyboardTop.current ?? (top + viewportHeight),
         );
-        const overlap = y + fieldHeight + 96 - visibleBottom;
+        // Leave generous clearance (195px) for the submit/continue button and card padding
+        const overlap = y + fieldHeight + 195 - visibleBottom;
         if (overlap > 0)
           scroller.scrollTo({
-            y: Math.max(0, offset.current + overlap),
+            y: Math.max(0, offset.current + overlap + 20),
             animated: true,
           });
         else if (y < top + 16)
@@ -58,9 +64,11 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
   }, []);
 
   const scheduleReveal = useCallback(() => {
-    if (retry.current) clearTimeout(retry.current);
-    retry.current = setTimeout(revealFocused, 120);
-  }, [revealFocused]);
+    clearRetries();
+    retries.current.push(setTimeout(revealFocused, 40));
+    retries.current.push(setTimeout(revealFocused, 160));
+    retries.current.push(setTimeout(revealFocused, 320));
+  }, [clearRetries, revealFocused]);
 
   useEffect(() => {
     const show = Keyboard.addListener("keyboardDidShow", (event) => {
@@ -75,9 +83,9 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
     return () => {
       show.remove();
       hide.remove();
-      if (retry.current) clearTimeout(retry.current);
+      clearRetries();
     };
-  }, [scheduleReveal]);
+  }, [clearRetries, scheduleReveal]);
 
   return (
     <SafeAreaView
@@ -128,9 +136,9 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
               maxWidth: 480,
               alignSelf: "center",
               paddingHorizontal: 20,
-              paddingTop: keyboardOpen || height < 640 ? 12 : 18,
-              paddingBottom: keyboardOpen ? 240 : Math.max(20, insets.bottom + 8),
-              gap: 14,
+              paddingTop: keyboardOpen || height < 640 ? 10 : 18,
+              paddingBottom: keyboardOpen ? 340 : Math.max(20, insets.bottom + 8),
+              gap: keyboardOpen ? 10 : 14,
               justifyContent: keyboardOpen || height < 640 ? "flex-start" : "center",
             }}
             keyboardShouldPersistTaps="handled"

@@ -204,12 +204,16 @@ export function ProfileScreen() {
           if (cloud) {
             void cloud
               .signOut()
+              .then(() => {
+                router.replace("/sign-in");
+              })
               .catch(() =>
                 notify("Sign-out could not complete. Please try again."),
               );
             return;
           }
           dispatch({ type: "session", session: null });
+          router.replace("/sign-in");
         }}
       />
     </Screen>

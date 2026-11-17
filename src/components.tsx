@@ -89,6 +89,7 @@ export function Touch({
   children,
   onPress,
   style,
+  containerStyle,
   label,
   disabled,
   selected,
@@ -96,6 +97,7 @@ export function Touch({
   children: React.ReactNode;
   onPress: () => void;
   style?: StyleProp<ViewStyle>;
+  containerStyle?: StyleProp<ViewStyle>;
   label?: string;
   disabled?: boolean;
   selected?: boolean;
@@ -111,9 +113,25 @@ export function Touch({
         useNativeDriver: Platform.OS !== "web",
       }).start();
   };
+  const flat = StyleSheet.flatten(style);
+  const layoutStyle = flat
+    ? {
+        flex: flat.flex,
+        flexGrow: flat.flexGrow,
+        flexShrink: flat.flexShrink,
+        width: flat.width,
+        maxWidth: flat.maxWidth,
+        minWidth: flat.minWidth,
+        alignSelf: flat.alignSelf,
+      }
+    : undefined;
   return (
     <Animated.View
-      style={{ transform: [{ scale }], opacity: disabled ? 0.45 : 1 }}
+      style={[
+        layoutStyle,
+        containerStyle,
+        { transform: [{ scale }], opacity: disabled ? 0.45 : 1 },
+      ]}
     >
       <Pressable
         accessibilityRole="button"
@@ -825,6 +843,153 @@ export function Field({
           inputProps?.style,
         ]}
       />
+      {!!error && (
+        <SlideDownFade duration={250} distance={6}>
+          <View
+            accessibilityLiveRegion="polite"
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 2,
+            }}
+          >
+            <Icon name="alert-circle" size={14} color={theme.red} />
+            <Text
+              style={{
+                color: theme.red,
+                fontSize: 12,
+                lineHeight: 18,
+                fontWeight: "600",
+                flexShrink: 1,
+              }}
+            >
+              {error}
+            </Text>
+          </View>
+        </SlideDownFade>
+      )}
+    </View>
+  );
+}
+export function OtpInput({
+  value,
+  onChange,
+  onComplete,
+  length = 6,
+  error,
+  autoFocus = false,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onComplete?: (code: string) => void;
+  length?: number;
+  error?: string;
+  autoFocus?: boolean;
+}) {
+  const [focus, setFocus] = useState(false);
+  const inputRef = useRef<TextInput>(null);
+  const reveal = useContext(FocusedFieldContext);
+
+  const digits = Array.from({ length }, (_, i) => value[i] || "");
+
+  function handleChange(text: string) {
+    const cleaned = text.replace(/\D/g, "").slice(0, length);
+    onChange(cleaned);
+    if (cleaned.length === length) {
+      onComplete?.(cleaned);
+    }
+  }
+
+  return (
+    <View style={{ gap: 8, width: "100%" }}>
+      <Touch
+        label="Enter 6-digit verification code"
+        onPress={() => inputRef.current?.focus()}
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 6,
+          paddingVertical: 4,
+        }}
+      >
+        {digits.map((digit, idx) => {
+          const isCurrent =
+            focus && idx === Math.min(value.length, length - 1);
+          const isFilled = digit.length > 0;
+          return (
+            <View
+              key={idx}
+              style={{
+                flex: 1,
+                maxWidth: 48,
+                height: 52,
+                borderRadius: 14,
+                borderWidth: isCurrent || (error && !isFilled) ? 2 : 1.5,
+                borderColor: error
+                  ? theme.red
+                  : isCurrent
+                    ? theme.green
+                    : isFilled
+                      ? "#1E6B52"
+                      : "#DDE7E2",
+                backgroundColor: error
+                  ? "#FFF9FA"
+                  : isCurrent
+                    ? "#F3F9F6"
+                    : isFilled
+                      ? "#F9FCFB"
+                      : "white",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 22,
+                  fontWeight: "700",
+                  color: isFilled ? theme.ink : "#BAC7C1",
+                }}
+              >
+                {digit || (isCurrent ? "·" : "—")}
+              </Text>
+            </View>
+          );
+        })}
+      </Touch>
+
+      {/* Hidden real input for accessibility, keyboard input, copy/paste, and auto-focus */}
+      <TextInput
+        ref={inputRef}
+        value={value}
+        onChangeText={handleChange}
+        keyboardType="number-pad"
+        maxLength={length}
+        autoFocus={autoFocus}
+        autoComplete="one-time-code"
+        textContentType="oneTimeCode"
+        accessibilityLabel="6-digit verification code"
+        onFocus={() => {
+          setFocus(true);
+          reveal(inputRef.current);
+        }}
+        onBlur={() => {
+          setFocus(false);
+          reveal(null);
+        }}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          opacity: 0.01,
+          color: "transparent",
+        }}
+        caretHidden
+      />
+
       {!!error && (
         <SlideDownFade duration={250} distance={6}>
           <View

@@ -16,6 +16,7 @@ import {
   ErrorState,
   Field,
   Icon,
+  OtpInput,
   SlideDownFade,
   theme,
   Title,
@@ -182,8 +183,8 @@ export function GoogleLogin() {
     }
   }
 
-  async function handleVerifyEmailCode() {
-    const cleanCode = otpCode.trim();
+  async function handleVerifyEmailCode(targetCode?: string) {
+    const cleanCode = (typeof targetCode === "string" ? targetCode : otpCode).trim();
     if (cleanCode.length < 6) {
       setEmailError("Enter the 6-digit verification code.");
       return;
@@ -227,32 +228,37 @@ export function GoogleLogin() {
         style={{
           flexDirection: "row",
           alignItems: "center",
-          gap: 12,
-          paddingVertical: 8,
+          gap: 10,
+          marginVertical: 4,
         }}
       >
-        <BloomLogo />
-        <Text
-          style={{
-            fontSize: 18,
-            fontWeight: "800",
-            letterSpacing: 1.4,
-            color: theme.ink,
-          }}
-        >
-          BLOOM MED
-        </Text>
+        <BloomLogo size={42} />
+        <View style={{ flex: 1 }}>
+          <Text
+            style={{
+              fontSize: 19,
+              fontWeight: "800",
+              letterSpacing: 1.2,
+              color: theme.ink,
+            }}
+          >
+            BLOOM MED
+          </Text>
+          <Text style={{ fontSize: 11, color: theme.muted, fontWeight: "500" }}>
+            A gentler way to care at home
+          </Text>
+        </View>
       </View>
 
-      {method === "options" && height > 700 && (
+      {method === "options" && height > 620 && (
         <GentleMotion>
           <View>
             <Image
               source={require("../../assets/care-welcome.png")}
               style={{
                 width: "100%",
-                height: Math.min(180, height - 580),
-                borderRadius: 24,
+                height: Math.min(160, Math.max(110, height - 640)),
+                borderRadius: 22,
               }}
               resizeMode="cover"
             />
@@ -330,7 +336,7 @@ export function GoogleLogin() {
             </Card>
           )
         ) : method === "email" ? (
-          <Card>
+          <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
             <SlideDownFade>
               <View style={{ gap: 14 }}>
                 <View
@@ -388,7 +394,7 @@ export function GoogleLogin() {
             </SlideDownFade>
           </Card>
         ) : method === "email_otp" ? (
-          <Card>
+          <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
             <SlideDownFade>
               <View style={{ gap: 14 }}>
                 <View
@@ -420,23 +426,29 @@ export function GoogleLogin() {
                   .
                 </Body>
 
-                <Field
-                  label="Verification code"
-                  value={otpCode}
-                  onChange={(val) => {
-                    setOtpCode(val.replace(/\D/g, "").slice(0, 6));
-                    setEmailError("");
-                  }}
-                  placeholder="123456"
-                  numeric
-                  error={emailError}
-                />
+                <View style={{ gap: 8 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: theme.ink }}>
+                    6-digit verification code
+                  </Text>
+                  <OtpInput
+                    value={otpCode}
+                    onChange={(val) => {
+                      setOtpCode(val);
+                      if (emailError) setEmailError("");
+                    }}
+                    onComplete={(val) => {
+                      void handleVerifyEmailCode(val);
+                    }}
+                    error={emailError}
+                    autoFocus
+                  />
+                </View>
 
                 <Button
                   title={emailSubmitting ? "Verifying…" : "Verify & Continue"}
                   disabled={emailSubmitting || otpCode.length < 6}
                   loading={emailSubmitting}
-                  onPress={handleVerifyEmailCode}
+                  onPress={() => void handleVerifyEmailCode(otpCode)}
                 />
 
                 <Touch
@@ -458,7 +470,7 @@ export function GoogleLogin() {
             </SlideDownFade>
           </Card>
         ) : (
-          <Card>
+          <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
             <Title small>Welcome back</Title>
             {expoGo && (
               <Body muted>
