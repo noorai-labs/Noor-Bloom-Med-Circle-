@@ -34,8 +34,8 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const microphoneRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const dataArrayRef = useRef<Uint8Array | null>(null);
-  const animationFrameRef = useRef<number | undefined>(undefined);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const sessionIdRef = useRef(0);
 
   const vert = /* glsl */ `
     precision highp float;
@@ -153,7 +153,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n0);
       float d0 = distance(uv, (r0 * invLen) * uv);
       float v0 = light1(1.0, 10.0, d0);
-      v0 *= smoothstep(r0 * 1.05, r0, len);
+      v0 *= 1.0 - smoothstep(r0, r0 * 1.05, len);
       float cl = cos(ang + iTime * 2.0) * 0.5 + 0.5;
 
       float a = iTime * -1.0;
@@ -162,7 +162,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       float v1 = light2(1.5, 5.0, d);
       v1 *= light1(1.0, 50.0, d0);
 
-      float v2 = smoothstep(1.0, mix(innerRadius, 1.0, n0 * 0.5), len);
+      float v2 = 1.0 - smoothstep(mix(innerRadius, 1.0, n0 * 0.5), 1.0, len);
       float v3 = smoothstep(innerRadius, mix(innerRadius, 1.0, 0.5), len);
 
       vec3 col = mix(color1, color2, cl);
@@ -218,6 +218,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
 
   // Stop microphone and cleanup
   const stopMicrophone = () => {
+    sessionIdRef.current++;
     try {
       // Stop all tracks in the media stream
       if (mediaStreamRef.current) {
@@ -240,7 +241,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
 
       // Close audio context
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
+        audioContextRef.current.close().catch(() => {});
         audioContextRef.current = null;
       }
 
@@ -253,6 +254,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
 
   // Initialize microphone access
   const initMicrophone = async () => {
+    const currentSession = ++sessionIdRef.current;
     try {
       // Clean up any existing microphone first
       stopMicrophone();
@@ -266,18 +268,36 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
         },
       });
 
+      // Verify session is still active
+      if (currentSession !== sessionIdRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        return false;
+      }
+
       // Store the stream reference for cleanup
       mediaStreamRef.current = stream;
 
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = audioCtx;
 
       // Resume audio context if needed
-      if (audioContextRef.current.state === 'suspended') {
-        await audioContextRef.current.resume();
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
       }
 
-      analyserRef.current = audioContextRef.current.createAnalyser();
-      microphoneRef.current = audioContextRef.current.createMediaStreamSource(stream);
+      // Recheck session ownership after resume
+      if (currentSession !== sessionIdRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
+        if (audioCtx.state !== 'closed') {
+          audioCtx.close().catch(() => {});
+        }
+        audioContextRef.current = null;
+        return false;
+      }
+
+      analyserRef.current = audioCtx.createAnalyser();
+      microphoneRef.current = audioCtx.createMediaStreamSource(stream);
 
       // Optimize for voice detection
       analyserRef.current.fftSize = 512;  // Higher resolution
@@ -310,7 +330,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
         alpha: true,
         premultipliedAlpha: false,
         antialias: true,
-        dpr: window.devicePixelRatio || 1
+        dpr: Math.min(window.devicePixelRatio || 1, 2)
       });
       glContext = rendererInstance.gl;
       // Set clear color to transparent to avoid white flash
@@ -349,13 +369,12 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
 
       const resize = () => {
         if (!container || !rendererInstance || !glContext) return;
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const width = size || container.clientWidth || 52;
         const height = size || container.clientHeight || 52;
 
         if (width === 0 || height === 0) return;
 
-        rendererInstance.setSize(width * dpr, height * dpr);
+        rendererInstance.setSize(width, height);
         const canvas = glContext.canvas as HTMLCanvasElement;
         if (canvas.style) {
           canvas.style.width = width + "px";
@@ -379,18 +398,6 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       let currentRot = 0;
       let voiceLevel = 0;
       const baseRotationSpeed = 0.3;
-      let isMicrophoneInitialized = false;
-
-      // Initialize or stop microphone based on voice control setting
-      if (enableVoiceControl) {
-        initMicrophone().then((success) => {
-          isMicrophoneInitialized = success;
-        });
-      } else {
-        // Stop microphone when voice control is disabled
-        stopMicrophone();
-        isMicrophoneInitialized = false;
-      }
 
       const update = (t: number) => {
         rafId = requestAnimationFrame(update);
@@ -402,7 +409,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
         program.uniforms.hue.value = hue;
 
         // Handle voice input
-        if (enableVoiceControl && isMicrophoneInitialized) {
+        if (enableVoiceControl && analyserRef.current && dataArrayRef.current) {
           voiceLevel = analyzeAudio();
 
           // Notify parent component about voice detection
@@ -456,9 +463,6 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
           }
         }
 
-        // Stop microphone and clean up audio resources
-        stopMicrophone();
-
         if (glContext) {
           glContext.getExtension("WEBGL_lose_context")?.loseContext();
         }
@@ -483,25 +487,23 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
     frag
   ]);
 
-  // Handle microphone state changes separately
+  // Handle microphone acquisition and cleanup solely in this effect
   useEffect(() => {
     let isMounted = true;
 
-    const handleMicrophoneState = async () => {
-      if (enableVoiceControl) {
-        const success = await initMicrophone();
-        if (!isMounted) return;
-        // Update the microphone state in the WebGL context if needed
-      } else {
-        stopMicrophone();
-      }
-    };
-
-    handleMicrophoneState();
+    if (enableVoiceControl) {
+      void initMicrophone().then((success) => {
+        if (!isMounted && success) {
+          stopMicrophone();
+        }
+      });
+    } else {
+      stopMicrophone();
+    }
 
     return () => {
       isMounted = false;
-      // Don't stop microphone here as it will be handled by the main cleanup
+      stopMicrophone();
     };
   }, [enableVoiceControl]);
 
@@ -511,7 +513,18 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
     <div
       ref={ctnDom}
       onClick={onPress}
+      onKeyDown={
+        onPress
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onPress();
+              }
+            }
+          : undefined
+      }
       role={onPress ? "button" : undefined}
+      aria-label={onPress ? "Voice assistant" : undefined}
       tabIndex={onPress ? 0 : undefined}
       style={{
         width: dimension,

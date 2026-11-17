@@ -205,6 +205,7 @@ export function ProfileScreen() {
             void cloud
               .signOut()
               .then(() => {
+                dispatch({ type: "session", session: null });
                 router.replace("/sign-in");
               })
               .catch(() =>

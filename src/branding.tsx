@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import {
-  AccessibilityInfo,
   ActivityIndicator,
   Animated,
   Image,
@@ -8,6 +7,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useReducedMotion } from "./components";
 
 export function BloomLogo({ size = 44 }: { size?: number }) {
   return (
@@ -20,56 +20,49 @@ export function BloomLogo({ size = 44 }: { size?: number }) {
 }
 
 export function StartupLoader() {
-  const [progress] = useState(() => new Animated.Value(0));
+  const reduced = useReducedMotion();
+  const [progress] = useState(() => new Animated.Value(reduced ? 1 : 0));
   const [pulse] = useState(() => new Animated.Value(1));
   useEffect(() => {
+    if (reduced) {
+      progress.setValue(1);
+      pulse.setValue(1);
+      return;
+    }
     let cancelled = false;
-    let animation: Animated.CompositeAnimation | undefined;
     let pulseAnim: Animated.CompositeAnimation | undefined;
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then((reduced) => {
-        if (cancelled) return;
-        if (reduced) {
-          progress.setValue(1);
-          pulse.setValue(1);
-          return;
-        }
-        animation = Animated.spring(progress, {
-          toValue: 1,
-          damping: 18,
-          stiffness: 110,
-          mass: 0.8,
-          useNativeDriver: Platform.OS !== "web",
-        });
-        animation.start(() => {
-          if (cancelled) return;
-          pulseAnim = Animated.loop(
-            Animated.sequence([
-              Animated.timing(pulse, {
-                toValue: 1.03,
-                duration: 1000,
-                useNativeDriver: Platform.OS !== "web",
-              }),
-              Animated.timing(pulse, {
-                toValue: 0.97,
-                duration: 1000,
-                useNativeDriver: Platform.OS !== "web",
-              }),
-            ]),
-          );
-          pulseAnim.start();
-        });
-      })
-      .catch(() => {
-        progress.setValue(1);
-        pulse.setValue(1);
-      });
+    const animation = Animated.spring(progress, {
+      toValue: 1,
+      damping: 18,
+      stiffness: 110,
+      mass: 0.8,
+      useNativeDriver: Platform.OS !== "web",
+    });
+    animation.start(() => {
+      if (cancelled) return;
+      pulseAnim = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulse, {
+            toValue: 1.03,
+            duration: 1000,
+            useNativeDriver: Platform.OS !== "web",
+          }),
+          Animated.timing(pulse, {
+            toValue: 0.97,
+            duration: 1000,
+            useNativeDriver: Platform.OS !== "web",
+          }),
+        ]),
+      );
+      pulseAnim.start();
+    });
     return () => {
       cancelled = true;
-      animation?.stop();
+      animation.stop();
       pulseAnim?.stop();
+      pulse.setValue(1);
     };
-  }, [progress, pulse]);
+  }, [progress, pulse, reduced]);
   return (
     <View
       accessibilityLabel="Opening BLOOM MED"

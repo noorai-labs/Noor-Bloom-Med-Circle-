@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, Modal, Platform, Text, View, useWindowDimensions } from "react-native";
 import Constants, { ExecutionEnvironment } from "expo-constants";
 import { useAuth, useClerk, useSSO } from "@clerk/expo";
@@ -38,6 +38,8 @@ export function GoogleLogin() {
 
   const [method, setMethod] = useState<"options" | "email" | "email_otp">("options");
   const [email, setEmail] = useState("");
+  const [submittedEmail, setSubmittedEmail] = useState("");
+  const sendRequestIdRef = useRef(0);
   const [otpCode, setOtpCode] = useState("");
   const [emailSubmitting, setEmailSubmitting] = useState(false);
   const [emailError, setEmailError] = useState("");
@@ -133,57 +135,75 @@ export function GoogleLogin() {
   }
 
   async function handleSendEmailCode() {
-    const cleanEmail = email.trim();
+    if (emailSubmitting) return;
+    const cleanEmail = (method === "email_otp" && submittedEmail ? submittedEmail : email).trim();
     if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) {
       setEmailError("Enter a valid email address.");
       return;
     }
+    const reqId = ++sendRequestIdRef.current;
     setEmailSubmitting(true);
     setEmailError("");
+    setSubmittedEmail(cleanEmail);
     try {
       if (isSignUp) {
         await clerk.client.signUp.create({ emailAddress: cleanEmail });
         await clerk.client.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
-        setMethod("email_otp");
+        if (sendRequestIdRef.current === reqId) {
+          setMethod("email_otp");
+        }
       } else {
         try {
           const attempt = await clerk.client.signIn.create({ identifier: cleanEmail });
           const factor = attempt.supportedFirstFactors?.find(
             (f) => f.strategy === "email_code"
           );
-          if (factor && "emailAddressId" in factor) {
+          if (factor && "emailAddressId" in factor && factor.emailAddressId) {
             await clerk.client.signIn.prepareFirstFactor({
               strategy: "email_code",
               emailAddressId: factor.emailAddressId as string,
             });
+            if (sendRequestIdRef.current === reqId) {
+              setMethod("email_otp");
+            }
+          } else {
+            if (sendRequestIdRef.current === reqId) {
+              setEmailError("Email code verification is not supported for this account.");
+            }
           }
-          setMethod("email_otp");
         } catch (err: unknown) {
           const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
           const code = clerkErr?.errors?.[0]?.code;
           if (code === "form_identifier_not_found") {
             await clerk.client.signUp.create({ emailAddress: cleanEmail });
             await clerk.client.signUp.prepareEmailAddressVerification({ strategy: "email_code" });
-            setIsSignUp(true);
-            setMethod("email_otp");
+            if (sendRequestIdRef.current === reqId) {
+              setIsSignUp(true);
+              setMethod("email_otp");
+            }
           } else {
             throw err;
           }
         }
       }
     } catch (err: unknown) {
-      const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
-      const msg =
-        clerkErr?.errors?.[0]?.longMessage ||
-        clerkErr?.errors?.[0]?.message ||
-        (err instanceof Error ? err.message : "Failed to send verification code.");
-      setEmailError(msg);
+      if (sendRequestIdRef.current === reqId) {
+        const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
+        const msg =
+          clerkErr?.errors?.[0]?.longMessage ||
+          clerkErr?.errors?.[0]?.message ||
+          (err instanceof Error ? err.message : "Failed to send verification code.");
+        setEmailError(msg);
+      }
     } finally {
-      setEmailSubmitting(false);
+      if (sendRequestIdRef.current === reqId) {
+        setEmailSubmitting(false);
+      }
     }
   }
 
   async function handleVerifyEmailCode(targetCode?: string) {
+    if (emailSubmitting) return;
     const cleanCode = (typeof targetCode === "string" ? targetCode : otpCode).trim();
     if (cleanCode.length < 6) {
       setEmailError("Enter the 6-digit verification code.");
@@ -293,18 +313,26 @@ export function GoogleLogin() {
       <Entrance>
         {isSignedIn ? (
           cloud?.error ? (
-            <ErrorState
-              title="Couldn’t connect to care space"
-              message={
-                cloud.error.includes("Failed to fetch") || cloud.error.includes("Network")
-                  ? "Couldn’t reach the care server. Please check your internet connection and try again."
-                  : cloud.error
-              }
-              onRetry={() => void cloud?.refresh()}
-              retryLabel="Try again"
-              secondaryAction="Open personal care space"
-              onSecondaryPress={() => void cloud?.select("")}
-            />
+            <Card style={{ gap: 16 }}>
+              <ErrorState
+                title="Couldn’t connect to care space"
+                message={
+                  cloud.error.includes("Failed to fetch") || cloud.error.includes("Network")
+                    ? "Couldn’t reach the care server. Please check your internet connection and try again."
+                    : cloud.error
+                }
+                onRetry={() => void cloud?.refresh()}
+                retryLabel="Try again"
+                secondaryAction="Open personal care space"
+                onSecondaryPress={() => void cloud?.select("")}
+              />
+              <Button
+                title="Sign out"
+                outline
+                icon="log-out-outline"
+                onPress={() => void cloud?.signOut()}
+              />
+            </Card>
           ) : (
             <Card style={{ gap: 16 }}>
               <Title small>Connect your care space</Title>
@@ -349,7 +377,10 @@ export function GoogleLogin() {
                 >
                   <Touch
                     label="Back to options"
+                    disabled={emailSubmitting}
                     onPress={() => {
+                      if (emailSubmitting) return;
+                      sendRequestIdRef.current++;
                       setMethod("options");
                       setEmailError("");
                     }}
@@ -371,7 +402,9 @@ export function GoogleLogin() {
                 <Field
                   label="Email address"
                   value={email}
+                  inputProps={{ editable: !emailSubmitting }}
                   onChange={(val) => {
+                    if (emailSubmitting) return;
                     setEmail(val);
                     setEmailError("");
                   }}
@@ -407,7 +440,9 @@ export function GoogleLogin() {
                 >
                   <Touch
                     label="Back"
+                    disabled={emailSubmitting}
                     onPress={() => {
+                      if (emailSubmitting) return;
                       setMethod("email");
                       setEmailError("");
                     }}
@@ -421,7 +456,7 @@ export function GoogleLogin() {
                 <Body muted>
                   We sent a 6-digit verification code to{" "}
                   <Text style={{ color: theme.ink, fontWeight: "700" }}>
-                    {email}
+                    {submittedEmail || email}
                   </Text>
                   .
                 </Body>
@@ -453,13 +488,16 @@ export function GoogleLogin() {
 
                 <Touch
                   label="Resend code"
-                  onPress={handleSendEmailCode}
+                  disabled={emailSubmitting}
+                  onPress={() => {
+                    if (!emailSubmitting) void handleSendEmailCode();
+                  }}
                   style={{ alignSelf: "center", paddingVertical: 4 }}
                 >
                   <Text
                     style={{
                       fontSize: 13,
-                      color: theme.green,
+                      color: emailSubmitting ? theme.muted : theme.green,
                       fontWeight: "600",
                     }}
                   >

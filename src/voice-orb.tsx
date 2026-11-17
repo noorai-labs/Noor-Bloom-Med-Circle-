@@ -66,7 +66,7 @@ export function VoiceOrbModal({
           <View style={orbStyles.content}>
             <Text style={orbStyles.title}>Voice Assistant</Text>
             <Text style={orbStyles.subtitle}>
-              Listening in {language} · Speak or tap a care request
+              Voice visualizer ({language}) · Tap a care request to begin
             </Text>
 
             <View style={orbStyles.orbContainer}>
@@ -74,7 +74,7 @@ export function VoiceOrbModal({
             </View>
 
             <Text style={orbStyles.listeningText}>
-              Listening for your care request…
+              Audio-reactive orb · Select a request below
             </Text>
 
             <View style={orbStyles.commandsList}>
@@ -104,14 +104,14 @@ export function VoiceOrbModal({
             </View>
 
             <Touch
-              label="Stop listening"
+              label="Close visualizer"
               onPress={onClose}
               style={orbStyles.stopButton}
             >
               <View style={orbStyles.stopIndicator}>
                 <View style={orbStyles.stopSquare} />
               </View>
-              <Text style={orbStyles.stopButtonText}>Stop listening</Text>
+              <Text style={orbStyles.stopButtonText}>Close visualizer</Text>
             </Touch>
           </View>
         </SafeAreaView>

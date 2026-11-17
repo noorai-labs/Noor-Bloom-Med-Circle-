@@ -49,12 +49,14 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
         );
         // Leave generous clearance (195px) for the submit/continue button and card padding
         const overlap = y + fieldHeight + 195 - visibleBottom;
-        if (overlap > 0)
+        if (overlap > 0) {
+          const maxScrollUp = Math.max(0, y - (top + 16));
+          const scrollDelta = Math.min(overlap + 20, maxScrollUp);
           scroller.scrollTo({
-            y: Math.max(0, offset.current + overlap + 20),
+            y: Math.max(0, offset.current + scrollDelta),
             animated: true,
           });
-        else if (y < top + 16)
+        } else if (y < top + 16)
           scroller.scrollTo({
             y: Math.max(0, offset.current + y - top - 16),
             animated: true,

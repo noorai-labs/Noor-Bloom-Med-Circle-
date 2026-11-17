@@ -314,6 +314,7 @@ function DemoAuthScreen() {
                       selected={role === "Doctor"}
                       onPress={() => {
                         setRole("Doctor");
+                        setProviderId("1");
                         setError("");
                       }}
                       style={{
@@ -526,9 +527,9 @@ function DemoAuthScreen() {
               <Field
                 label={
                   role === "Doctor"
-                    ? "Doctor email or staff ID"
+                    ? "Doctor email"
                     : role === "Nurse"
-                      ? "Nurse staff email or ID"
+                      ? "Nurse staff email"
                       : "Email or mobile number"
                 }
                 value={identifier}

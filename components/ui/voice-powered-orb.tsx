@@ -165,7 +165,7 @@ export function VoicePoweredOrb({
         float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n0);
         float d0 = distance(uv, (r0 * invLen) * uv);
         float v0 = light1(1.0, 10.0, d0);
-        v0 *= smoothstep(r0 * 1.05, r0, len);
+        v0 *= 1.0 - smoothstep(r0, r0 * 1.05, len);
         float cl = cos(ang + iTime * 2.0) * 0.5 + 0.5;
 
         float a = iTime * -1.0;
@@ -174,7 +174,7 @@ export function VoicePoweredOrb({
         float v1 = light2(1.5, 5.0, d);
         v1 *= light1(1.0, 50.0, d0);
 
-        float v2 = smoothstep(1.0, mix(innerRadius, 1.0, n0 * 0.5), len);
+        float v2 = 1.0 - smoothstep(mix(innerRadius, 1.0, n0 * 0.5), 1.0, len);
         float v3 = smoothstep(innerRadius, mix(innerRadius, 1.0, 0.5), len);
 
         vec3 col = mix(color1, color2, cl);

@@ -125,6 +125,26 @@ export function Touch({
         alignSelf: flat.alignSelf,
       }
     : undefined;
+  const pressableStyle = flat
+    ? (() => {
+        const {
+          flex: _flex,
+          flexGrow: _flexGrow,
+          flexShrink: _flexShrink,
+          width: _width,
+          maxWidth: _maxWidth,
+          minWidth: _minWidth,
+          alignSelf: _alignSelf,
+          ...rest
+        } = flat;
+        return [
+          rest,
+          flat.width !== undefined || flat.flex !== undefined
+            ? { width: "100%" as const }
+            : undefined,
+        ];
+      })()
+    : style;
   return (
     <Animated.View
       style={[
@@ -144,7 +164,7 @@ export function Touch({
           if (Platform.OS !== "web") Haptics.selectionAsync().catch(() => {});
           onPress();
         }}
-        style={style}
+        style={pressableStyle}
       >
         {children}
       </Pressable>
@@ -965,7 +985,7 @@ export function OtpInput({
         value={value}
         onChangeText={handleChange}
         keyboardType="number-pad"
-        maxLength={length}
+        maxLength={32}
         autoFocus={autoFocus}
         autoComplete="one-time-code"
         textContentType="oneTimeCode"
@@ -1333,12 +1353,14 @@ export function Screen({
           keyboardTop.current ?? (top + viewportHeight),
         );
         const overlap = y + fieldHeight + 175 - visibleBottom;
-        if (overlap > 0)
+        if (overlap > 0) {
+          const maxScrollUp = Math.max(0, y - (top + 16));
+          const scrollDelta = Math.min(overlap + 24, maxScrollUp);
           scroller.scrollTo({
-            y: Math.max(0, offset.current + overlap + 24),
+            y: Math.max(0, offset.current + scrollDelta),
             animated: true,
           });
-        else if (y < top + 16)
+        } else if (y < top + 16)
           scroller.scrollTo({
             y: Math.max(0, offset.current + y - top - 16),
             animated: true,

@@ -583,17 +583,36 @@ export function AppointmentsScreen() {
       {!list.length && (
         <Empty
           title="No visits yet"
-          body="Book your first appointment with a verified doctor or home nurse."
-          icon="calendar-outline"
-          action="Find a doctor"
-          onPress={() =>
-            router.push({
-              pathname: "/discover",
-              params: { kind: "doctor" },
-            })
+          body={
+            ["Patient", "Family"].includes(state.session?.role || "")
+              ? "Book your first appointment with a verified doctor or home nurse."
+              : "No appointments scheduled in your queue yet."
           }
-          secondaryAction="Explore all care"
-          onSecondaryPress={() => router.push("/discover")}
+          icon="calendar-outline"
+          action={
+            ["Patient", "Family"].includes(state.session?.role || "")
+              ? "Find a doctor"
+              : undefined
+          }
+          onPress={
+            ["Patient", "Family"].includes(state.session?.role || "")
+              ? () =>
+                  router.push({
+                    pathname: "/discover",
+                    params: { kind: "doctor" },
+                  })
+              : undefined
+          }
+          secondaryAction={
+            ["Patient", "Family"].includes(state.session?.role || "")
+              ? "Explore all care"
+              : undefined
+          }
+          onSecondaryPress={
+            ["Patient", "Family"].includes(state.session?.role || "")
+              ? () => router.push("/discover")
+              : undefined
+          }
         />
       )}
       {list.length > 0 && ["Patient", "Family"].includes(state.session?.role || "") && (
