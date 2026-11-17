@@ -340,7 +340,7 @@ export function SupportScreen() {
       {!state.issues.length && (
         <Empty
           title="No open support requests"
-          body="Need help with appointments or records? Describe an issue above to alert clinic support."
+          body="Need help with appointments or records? Describe an issue above. Requests are saved locally; no message is sent to an external team."
           icon="chatbubble-outline"
         />
       )}

@@ -556,13 +556,7 @@ function DemoAuthScreen() {
               />
 
               <Button
-                title={
-                  role === "Doctor"
-                    ? "Continue as Doctor"
-                    : role === "Nurse"
-                      ? "Continue as Nurse"
-                      : "Continue as Patient"
-                }
+                title={`Continue as ${ROLE_DETAILS[role].title}`}
                 icon="arrow-forward"
                 onPress={continueLogin}
               />

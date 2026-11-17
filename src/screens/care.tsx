@@ -558,10 +558,15 @@ export function BookingScreen() {
 export function AppointmentsScreen() {
   const { state } = useClinic();
   const [filter, setFilter] = useState("Upcoming");
-  const list = visibleVisits(state).filter(
+  const allVisits = visibleVisits(state);
+  const list = allVisits.filter(
     (v) =>
       filter === "All" ||
       (filter === "Upcoming" ? !terminal(v) : v.status === filter),
+  );
+  const hasHistory = allVisits.length > 0;
+  const isPatientOrFamily = ["Patient", "Family"].includes(
+    state.session?.role || "",
   );
   return (
     <Screen
@@ -582,20 +587,20 @@ export function AppointmentsScreen() {
       ))}
       {!list.length && (
         <Empty
-          title="No visits yet"
+          title={
+            hasHistory ? `No ${filter.toLowerCase()} visits` : "No visits yet"
+          }
           body={
-            ["Patient", "Family"].includes(state.session?.role || "")
-              ? "Book your first appointment with a verified doctor or home nurse."
-              : "No appointments scheduled in your queue yet."
+            hasHistory
+              ? `You don’t have any ${filter.toLowerCase()} appointments right now.`
+              : isPatientOrFamily
+                ? "Book your first appointment with a verified doctor or home nurse."
+                : "No appointments scheduled in your queue yet."
           }
           icon="calendar-outline"
-          action={
-            ["Patient", "Family"].includes(state.session?.role || "")
-              ? "Find a doctor"
-              : undefined
-          }
+          action={!hasHistory && isPatientOrFamily ? "Find a doctor" : undefined}
           onPress={
-            ["Patient", "Family"].includes(state.session?.role || "")
+            !hasHistory && isPatientOrFamily
               ? () =>
                   router.push({
                     pathname: "/discover",
@@ -604,12 +609,10 @@ export function AppointmentsScreen() {
               : undefined
           }
           secondaryAction={
-            ["Patient", "Family"].includes(state.session?.role || "")
-              ? "Explore all care"
-              : undefined
+            !hasHistory && isPatientOrFamily ? "Explore all care" : undefined
           }
           onSecondaryPress={
-            ["Patient", "Family"].includes(state.session?.role || "")
+            !hasHistory && isPatientOrFamily
               ? () => router.push("/discover")
               : undefined
           }

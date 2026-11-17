@@ -21,7 +21,7 @@ export function BloomLogo({ size = 44 }: { size?: number }) {
 
 export function StartupLoader() {
   const reduced = useReducedMotion();
-  const [progress] = useState(() => new Animated.Value(reduced ? 1 : 0));
+  const [progress] = useState(() => new Animated.Value(0));
   const [pulse] = useState(() => new Animated.Value(1));
   useEffect(() => {
     if (reduced) {

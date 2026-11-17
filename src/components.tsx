@@ -944,7 +944,8 @@ export function OtpInput({
               style={{
                 flex: 1,
                 maxWidth: 48,
-                height: 52,
+                minHeight: 52,
+                paddingVertical: 4,
                 borderRadius: 14,
                 borderWidth: isCurrent || (error && !isFilled) ? 2 : 1.5,
                 borderColor: error
@@ -1353,18 +1354,19 @@ export function Screen({
           keyboardTop.current ?? (top + viewportHeight),
         );
         const overlap = y + fieldHeight + 175 - visibleBottom;
-        if (overlap > 0) {
+        if (y < top + 16) {
+          scroller.scrollTo({
+            y: Math.max(0, offset.current + y - top - 16),
+            animated: true,
+          });
+        } else if (overlap > 0) {
           const maxScrollUp = Math.max(0, y - (top + 16));
           const scrollDelta = Math.min(overlap + 24, maxScrollUp);
           scroller.scrollTo({
             y: Math.max(0, offset.current + scrollDelta),
             animated: true,
           });
-        } else if (y < top + 16)
-          scroller.scrollTo({
-            y: Math.max(0, offset.current + y - top - 16),
-            animated: true,
-          });
+        }
       });
     });
   }, []);

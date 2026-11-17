@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { VoicePoweredOrb } from "../components/ui/voice-powered-orb";
 import { Icon, Touch } from "./components";
@@ -63,57 +63,63 @@ export function VoiceOrbModal({
             <Icon name="close" color="#94A3B8" size={24} />
           </Pressable>
 
-          <View style={orbStyles.content}>
-            <Text style={orbStyles.title}>Voice Assistant</Text>
-            <Text style={orbStyles.subtitle}>
-              Voice visualizer ({language}) · Tap a care request to begin
-            </Text>
+          <ScrollView
+            contentContainerStyle={orbStyles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
+            <View style={orbStyles.content}>
+              <Text style={orbStyles.title}>Voice Assistant</Text>
+              <Text style={orbStyles.subtitle}>
+                Voice visualizer ({language}) · Tap a care request to begin
+              </Text>
 
-            <View style={orbStyles.orbContainer}>
-              <VoicePoweredOrb size={190} bg="#070C14" enableVoiceControl={true} />
-            </View>
-
-            <Text style={orbStyles.listeningText}>
-              Audio-reactive orb · Select a request below
-            </Text>
-
-            <View style={orbStyles.commandsList}>
-              {[
-                "When is my next appointment?",
-                "Show my reports",
-                "Remind me about my medicine",
-                "Book a doctor",
-              ].map((cmd) => (
-                <Touch
-                  key={cmd}
-                  label={cmd}
-                  onPress={() => {
-                    onCommand(cmd);
-                    onClose();
-                  }}
-                  style={orbStyles.commandChip}
-                >
-                  <Icon
-                    name="chatbubble-ellipses-outline"
-                    size={16}
-                    color="#67E8F9"
-                  />
-                  <Text style={orbStyles.commandText}>{cmd}</Text>
-                </Touch>
-              ))}
-            </View>
-
-            <Touch
-              label="Close visualizer"
-              onPress={onClose}
-              style={orbStyles.stopButton}
-            >
-              <View style={orbStyles.stopIndicator}>
-                <View style={orbStyles.stopSquare} />
+              <View style={orbStyles.orbContainer}>
+                <VoicePoweredOrb size={190} bg="#070C14" enableVoiceControl={true} />
               </View>
-              <Text style={orbStyles.stopButtonText}>Close visualizer</Text>
-            </Touch>
-          </View>
+
+              <Text style={orbStyles.listeningText}>
+                Audio-reactive orb · Select a request below
+              </Text>
+
+              <View style={orbStyles.commandsList}>
+                {[
+                  "When is my next appointment?",
+                  "Show my reports",
+                  "Remind me about my medicine",
+                  "Book a doctor",
+                ].map((cmd) => (
+                  <Touch
+                    key={cmd}
+                    label={cmd}
+                    onPress={() => {
+                      onCommand(cmd);
+                      onClose();
+                    }}
+                    style={orbStyles.commandChip}
+                  >
+                    <Icon
+                      name="chatbubble-ellipses-outline"
+                      size={16}
+                      color="#67E8F9"
+                    />
+                    <Text style={orbStyles.commandText}>{cmd}</Text>
+                  </Touch>
+                ))}
+              </View>
+
+              <Touch
+                label="Close visualizer"
+                onPress={onClose}
+                style={orbStyles.stopButton}
+              >
+                <View style={orbStyles.stopIndicator}>
+                  <View style={orbStyles.stopSquare} />
+                </View>
+                <Text style={orbStyles.stopButtonText}>Close visualizer</Text>
+              </Touch>
+            </View>
+          </ScrollView>
         </SafeAreaView>
       </View>
     </Modal>
@@ -137,8 +143,12 @@ const orbStyles = StyleSheet.create({
     borderColor: "#1E293B",
     width: "100%",
     maxWidth: 520,
+    maxHeight: "92%",
     alignSelf: "center",
     position: "relative",
+  },
+  scrollContent: {
+    paddingBottom: 16,
   },
   closeButton: {
     position: "absolute",

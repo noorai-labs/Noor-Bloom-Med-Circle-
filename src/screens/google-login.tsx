@@ -216,6 +216,10 @@ export function GoogleLogin() {
         const res = await clerk.client.signUp.attemptEmailAddressVerification({ code: cleanCode });
         if (res.status === "complete" && res.createdSessionId) {
           await clerk.setActive({ session: res.createdSessionId });
+        } else if (res.status === "missing_requirements") {
+          setEmailError(
+            "Account setup requires additional details. Please sign in with Google to finish registration."
+          );
         } else {
           setEmailError("Verification incomplete. Please check code.");
         }
@@ -226,6 +230,10 @@ export function GoogleLogin() {
         });
         if (res.status === "complete" && res.createdSessionId) {
           await clerk.setActive({ session: res.createdSessionId });
+        } else if (res.status === "needs_second_factor") {
+          setEmailError(
+            "Two-step verification is enabled for this account. Please use Google sign-in to authenticate."
+          );
         } else {
           setEmailError("Sign in incomplete. Please check code.");
         }

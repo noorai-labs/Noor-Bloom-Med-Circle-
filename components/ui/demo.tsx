@@ -6,12 +6,35 @@ import { Button } from "@/components/ui/button";
 import { Mic, MicOff } from "lucide-react";
 
 export default function VoicePoweredOrbPage() {
-  const [isRecording, setIsRecording] = useState(false);
+  const [requestedRecording, setRequestedRecording] = useState(false);
+  const [micStatus, setMicStatus] = useState<"idle" | "pending" | "active" | "error">("idle");
   const [, setVoiceDetected] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const toggleRecording = () => {
-    setIsRecording(!isRecording);
+    if (requestedRecording) {
+      setRequestedRecording(false);
+      setMicStatus("idle");
+      setErrorMessage("");
+    } else {
+      setRequestedRecording(true);
+      setMicStatus("pending");
+      setErrorMessage("");
+    }
   };
+
+  const handleMicStatus = (status: "idle" | "pending" | "active" | "error") => {
+    setMicStatus(status);
+    if (status === "error") {
+      setRequestedRecording(false);
+      setErrorMessage("Microphone access was denied or is unavailable.");
+    } else if (status === "active") {
+      setErrorMessage("");
+    }
+  };
+
+  const isRecording = requestedRecording && micStatus === "active";
+  const isPending = requestedRecording && micStatus === "pending";
 
   return (
     <div className="min-h-screen flex items-center justify-center p-8 bg-slate-950 text-white">
@@ -19,20 +42,24 @@ export default function VoicePoweredOrbPage() {
         {/* Orb */}
         <div className="w-96 h-96 relative">
           <VoicePoweredOrb
-            enableVoiceControl={isRecording}
+            enableVoiceControl={requestedRecording}
             className="rounded-xl overflow-hidden shadow-2xl"
             onVoiceDetected={setVoiceDetected}
+            onMicStatus={handleMicStatus}
           />
         </div>
 
         {/* Control Button */}
         <Button
           onClick={toggleRecording}
+          disabled={isPending}
           variant={isRecording ? "destructive" : "default"}
           size="lg"
           className="px-8 py-3"
         >
-          {isRecording ? (
+          {isPending ? (
+            "Initializing microphone…"
+          ) : isRecording ? (
             <>
               <MicOff className="w-5 h-5 mr-3" />
               Stop Recording
@@ -44,6 +71,12 @@ export default function VoicePoweredOrbPage() {
             </>
           )}
         </Button>
+
+        {errorMessage && (
+          <p className="text-red-400 text-center max-w-md text-sm">
+            {errorMessage}
+          </p>
+        )}
 
         {/* Simple Instructions */}
         <p className="text-muted-foreground text-center max-w-md text-sm">

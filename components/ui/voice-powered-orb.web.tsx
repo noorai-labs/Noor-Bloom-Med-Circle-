@@ -13,6 +13,7 @@ export interface VoicePoweredOrbProps {
   maxRotationSpeed?: number;
   maxHoverIntensity?: number;
   onVoiceDetected?: (detected: boolean) => void;
+  onMicStatus?: (status: "idle" | "pending" | "active" | "error") => void;
   onPress?: () => void;
   style?: React.CSSProperties | any;
 }
@@ -26,6 +27,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
   maxRotationSpeed = 1.2,
   maxHoverIntensity = 0.8,
   onVoiceDetected,
+  onMicStatus,
   onPress,
   style,
 }) => {
@@ -246,6 +248,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       }
 
       dataArrayRef.current = null;
+      onMicStatus?.("idle");
       console.log('Microphone stopped and cleaned up');
     } catch (error) {
       console.warn('Error stopping microphone:', error);
@@ -254,10 +257,11 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
 
   // Initialize microphone access
   const initMicrophone = async () => {
-    const currentSession = ++sessionIdRef.current;
     try {
       // Clean up any existing microphone first
       stopMicrophone();
+      const currentSession = ++sessionIdRef.current;
+      onMicStatus?.("pending");
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -309,9 +313,11 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       dataArrayRef.current = new Uint8Array(analyserRef.current.frequencyBinCount);
 
       console.log('Microphone initialized successfully');
+      onMicStatus?.("active");
       return true;
     } catch (error) {
       console.warn("Microphone access denied or not available:", error);
+      onMicStatus?.("error");
       return false;
     }
   };

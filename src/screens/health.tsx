@@ -90,6 +90,7 @@ export function RecordsScreen() {
       setBusy(false);
     }
   }
+  const hasRecords = state.records.length > 0;
   const records = state.records.filter(
     (r) =>
       (filter === "All" || r.category === filter) &&
@@ -197,8 +198,14 @@ export function RecordsScreen() {
         ))}
       {!records.length && !["History", "Care plans"].includes(filter) && (
         <Empty
-          title="No health records yet"
-          body="Keep all your lab reports, prescriptions, and health summaries organized in one secure place."
+          title={
+            hasRecords ? "No matching records found" : "No health records yet"
+          }
+          body={
+            hasRecords
+              ? "Try adjusting your search query or category filter to find what you need."
+              : "Keep all your lab reports, prescriptions, and health summaries organized in one secure place."
+          }
           icon="folder-open-outline"
         />
       )}

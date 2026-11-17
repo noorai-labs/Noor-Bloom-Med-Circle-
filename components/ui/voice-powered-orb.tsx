@@ -17,6 +17,7 @@ export interface VoicePoweredOrbProps {
   maxRotationSpeed?: number;
   maxHoverIntensity?: number;
   onVoiceDetected?: (detected: boolean) => void;
+  onMicStatus?: (status: "idle" | "pending" | "active" | "error") => void;
   onPress?: () => void;
   bg?: string;
   style?: StyleProp<ViewStyle>;
