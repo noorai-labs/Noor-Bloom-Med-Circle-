@@ -108,13 +108,13 @@ export function RecordsScreen() {
               <Icon name="shield-checkmark-outline" color={theme.green} />
             </View>
             <View style={{ flex: 1 }}>
-              <Title small>Care-team & family record access</Title>
+              <Title small>Family access</Title>
               <Body muted>
-                Allow attending doctors, nurses, and family members to review your uploaded health records.
+                Allow family members to view your care. Clinician record access is controlled separately by sharing permissions in Records.
               </Body>
             </View>
             <Switch
-              accessibilityLabel="Care-team and family record access consent"
+              accessibilityLabel="Family access consent"
               value={state.profile.consent}
               trackColor={{ false: "#D9E2E5", true: theme.green }}
               onValueChange={(consent) => {
@@ -125,16 +125,16 @@ export function RecordsScreen() {
                 if (!ok) return;
                 notify(
                   consent
-                    ? "Care-team and family access granted for your health records."
-                    : "Care-team access restricted.",
+                    ? "Family access enabled."
+                    : "Family access disabled.",
                 );
               }}
             />
           </View>
           <Body muted>
             {state.profile.consent
-              ? "Access granted · Attending clinicians and family members can review your health records."
-              : "Private · Attending clinicians and family members cannot view your uploaded documents until access is granted."}
+              ? "Family access enabled · Shared records also require separate record-sharing permission."
+              : "Family access disabled · Clinician record-sharing permissions are unchanged."}
           </Body>
         </Card>
       )}
@@ -338,8 +338,8 @@ export function RecordScreen() {
           <Chip
             title={
               state.profile.consent
-                ? "Care team access granted"
-                : "Private"
+                ? "Family access enabled"
+                : "Family access disabled"
             }
           />
         </View>
@@ -376,15 +376,18 @@ export function RecordScreen() {
               <Icon name="shield-checkmark-outline" color={theme.green} />
             </View>
             <View style={{ flex: 1 }}>
-              <Title small>Care-team & family record access</Title>
+              <Title small>Family access</Title>
+              <Body muted>
+                Clinician record access is controlled separately by sharing permissions in Records.
+              </Body>
               <Body muted>
                 {state.profile.consent
-                  ? "Care team and family members can review your health records."
-                  : "Private to you. Attending clinicians and family members cannot review your records."}
+                  ? "Family access is enabled. Shared records also require separate record-sharing permission."
+                  : "Family access is disabled. Clinician record-sharing permissions are unchanged."}
               </Body>
             </View>
             <Switch
-              accessibilityLabel="Care-team record access consent"
+              accessibilityLabel="Family access consent"
               value={state.profile.consent}
               trackColor={{ false: "#D9E2E5", true: theme.green }}
               onValueChange={(consent) => {
@@ -395,8 +398,8 @@ export function RecordScreen() {
                 if (!ok) return;
                 notify(
                   consent
-                    ? "Care-team and family access granted."
-                    : "Care-team access restricted.",
+                    ? "Family access enabled."
+                    : "Family access disabled.",
                 );
               }}
             />
