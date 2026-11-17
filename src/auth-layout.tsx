@@ -13,9 +13,9 @@ import { FocusedFieldContext, theme } from "./components";
 
 /** Login uses a bounded native layout with an auto-revealing scrollable container; keyboard resize keeps all controls accessible. */
 export function AuthLayout({ children }: { children: React.ReactNode }) {
-  const scroll = useRef<ScrollView>(null);
-  const viewport = useRef<View>(null);
-  const focused = useRef<TextInput | null>(null);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const viewport = useRef<React.ComponentRef<typeof View>>(null);
+  const focused = useRef<React.ComponentRef<typeof TextInput> | null>(null);
   const offset = useRef(0);
   const keyboardTop = useRef<number | null>(null);
   const retries = useRef<ReturnType<typeof setTimeout>[]>([]);

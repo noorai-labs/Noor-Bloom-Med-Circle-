@@ -1,0 +1,49 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "account_id": "5f60fb51e83a434162045c3ba7049f9a",
+  "name": "bloom-med-api",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "triggers": {
+    "crons": []
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REMINDERS",
+        "class_name": "MedicineReminderScheduler"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-reminders",
+      "new_sqlite_classes": [
+        "MedicineReminderScheduler"
+      ]
+    }
+  ],
+  "vars": {
+    "CLERK_ISSUER": "https://rested-tortoise-8756.clerk.accounts.dev",
+    "ALLOWED_ORIGINS": "",
+    "AUTHORIZED_PARTIES": "",
+    "FILES_PREFIX": "main/"
+  },
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "bloom-med-storage"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bloom-med-main",
+      "database_id": "ecaa22e4-5fb5-4254-880b-44aa529d3165",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

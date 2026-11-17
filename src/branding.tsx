@@ -9,10 +9,19 @@ import {
 } from "react-native";
 import { useReducedMotion } from "./components";
 
+export const brandLogoUrl =
+  "https://bloom-med-api.bloom-med.workers.dev/branding/bloom-logo-v2.png";
 export function BloomLogo({ size = 44 }: { size?: number }) {
+  const [remoteFailed, setRemoteFailed] = useState(false);
   return (
     <Image
-      source={require("../assets/bloom-logo-v2.png")}
+      source={
+        remoteFailed
+          ? require("../assets/bloom-logo-v2.png")
+          : { uri: brandLogoUrl }
+      }
+      defaultSource={require("../assets/bloom-logo-v2.png")}
+      onError={() => setRemoteFailed(true)}
       accessibilityLabel="BLOOM MED blossom and medical cross logo"
       style={{ width: size, height: size, borderRadius: size * 0.25 }}
     />

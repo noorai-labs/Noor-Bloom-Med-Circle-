@@ -56,7 +56,13 @@ export function Icon({
   color?: ColorValue;
   size?: number;
 }) {
-  return <Ionicons name={name} size={size} color={color} />;
+  return (
+    <Ionicons
+      name={name}
+      size={size}
+      color={typeof color === "number" ? theme.green : color || theme.green}
+    />
+  );
 }
 export function useReducedMotion() {
   const [reduced, setReduced] = useState(true);
@@ -70,7 +76,9 @@ export function useReducedMotion() {
   }, []);
   return reduced;
 }
-export const FocusedFieldContext = createContext<(field: TextInput | null) => void>(
+export const FocusedFieldContext = createContext<
+  (field: React.ComponentRef<typeof TextInput> | null) => void
+>(
   () => {},
 );
 export function useKeyboardOpen() {
@@ -827,7 +835,7 @@ export function Field({
   error?: string;
 }) {
   const [focus, setFocus] = useState(false);
-  const input = useRef<TextInput>(null);
+  const input = useRef<React.ComponentRef<typeof TextInput>>(null);
   const reveal = useContext(FocusedFieldContext);
   return (
     <View style={{ gap: 8, width: "100%", minWidth: 0 }}>
@@ -908,7 +916,7 @@ export function OtpInput({
   autoFocus?: boolean;
 }) {
   const [focus, setFocus] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
   const reveal = useContext(FocusedFieldContext);
 
   const digits = Array.from({ length }, (_, i) => value[i] || "");
@@ -1322,9 +1330,9 @@ export function Screen({
 }) {
   const { state, ready, toast } = useClinic();
   const insets = useSafeAreaInsets();
-  const scroll = useRef<ScrollView>(null);
-  const viewport = useRef<View>(null);
-  const focused = useRef<TextInput | null>(null);
+  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const viewport = useRef<React.ComponentRef<typeof View>>(null);
+  const focused = useRef<React.ComponentRef<typeof TextInput> | null>(null);
   const offset = useRef(0);
   const keyboardTop = useRef<number | null>(null);
   const retries = useRef<ReturnType<typeof setTimeout>[]>([]);

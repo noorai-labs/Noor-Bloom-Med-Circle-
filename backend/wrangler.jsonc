@@ -5,6 +5,18 @@
   "main": "worker.ts",
   "compatibility_date": "2026-10-11",
   "compatibility_flags": ["nodejs_compat"],
+  "triggers": { "crons": ["0 3 * * *", "* * * * *"] },
+  "durable_objects": {
+    "bindings": [
+      { "name": "REMINDERS", "class_name": "MedicineReminderScheduler" },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1-reminders",
+      "new_sqlite_classes": ["MedicineReminderScheduler"],
+    },
+  ],
   "vars": {
     "CLERK_ISSUER": "https://rested-tortoise-8756.clerk.accounts.dev",
     "ALLOWED_ORIGINS": "",

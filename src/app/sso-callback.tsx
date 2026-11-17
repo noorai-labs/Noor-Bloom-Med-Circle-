@@ -1,3 +1,5 @@
+import { postLoginRoute } from "../login-routing";
+import { useLoginAudience } from "../login-audience";
 import React, { useEffect, useState } from "react";
 import { useAuth } from "@clerk/expo";
 import { Redirect, router } from "expo-router";
@@ -9,6 +11,7 @@ import { BloomLogo } from "../branding";
 import { Body, Button, theme } from "../components";
 
 export default function Callback() {
+  const { audience } = useLoginAudience();
   const { isSignedIn } = useAuth();
   const { state, ready, cloud } = useClinic();
   const flow = useAuthFlow();
@@ -20,11 +23,7 @@ export default function Callback() {
   if (state.session)
     return (
       <Redirect
-        href={
-          state.session.role === "Patient" && !state.onboarded
-            ? "/onboarding"
-            : "/(tabs)"
-        }
+        href={postLoginRoute(state.session, state.onboarded, audience)}
       />
     );
   if (!flow.busy && !isSignedIn && flow.error)

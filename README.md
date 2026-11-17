@@ -1,8 +1,22 @@
 # BLOOM MED mobile app
 
-Expo React Native app for Android and iOS with local demo and cloud modes. Uses Expo SDK 57, Expo Router native stacks and tabs, TypeScript and shared clinic state.
+Expo React Native app for Android and iOS with local demo and cloud modes. Uses Expo SDK 58, Expo Router native stacks and tabs, TypeScript and shared clinic state.
 
 Cloud mode adds Clerk Google-only OAuth, authenticated Worker endpoints, D1 care data, private R2 attachments, server-assigned care-team access and conflict-safe syncing. See [cloud setup](backend/SETUP.md). The cloud code has local integration tests; live connection awaits your Clerk and Cloudflare configuration. Demo mode remains the default until configured.
+
+## Proposed production architecture
+
+Doctor dashboard and connected patient/doctor call mockups are available in [UI design concepts](docs/design/README.md). These are visual references and have not yet been applied as the implemented app UI.
+
+Self-hosted appointment audio/video integration and its three-call pilot cap are documented in [Self-hosted consultations](docs/self-hosted-consultations.md).
+
+The first manual-verification release is documented in [Manual verification — India](docs/manual-verification-release.md), including the applicant flow, reviewer permissions and rollout limits.
+
+The proposed architecture expands the existing Cloudflare Worker into the central backend for patient verification, provider onboarding, roles, consent and care data. The diagram includes planned components and does not represent every feature as implemented.
+
+![BLOOM MED proposed production architecture](docs/architecture/bloom-med-production-architecture.png)
+
+[Open the full-size architecture diagram](docs/architecture/bloom-med-production-architecture.png)
 
 ## Open on your phone
 
@@ -69,3 +83,13 @@ Demo mode uses fictional data and unencrypted device storage. Its role selection
 The browser is an optional development preview. Native phone attachment copies are persistent; browser attachment records contain metadata only. The assistant and voice input remain mock interactions.
 
 Dependency audit currently reports 26 findings (14 high, 12 moderate) in the dependency tree. SDK-breaking forced downgrades were not applied. ESLint 9 is pinned for compatibility with Expo's lint plugins.
+
+SDK 58 uses React Native 0.88 and React 19.3. After upgrading from SDK 57, rebuild the development APK; an SDK 57 development app cannot load SDK 58 native modules. Email-code sign-in can be tested with the configured Clerk instance; Google SSO still requires the installed development/release app and native callback configuration.
+
+## Medicine notifications
+
+Cloud schedule sync and server push are implemented in the existing Cloudflare backend. Each phone chooses local offline alerts or cloud push in Medicines; the app does not send both. See [backend activation and Firebase/EAS setup](backend/SETUP.md#cloud-medicine-reminders--existing-worker). The migration/deployment and live device checks are separate from local tests.
+
+In the patient Medicines screen, enable medicine notifications and allow the phone permission. Each active medicine can have 1–6 daily alert times (24-hour clock). Use the test button to schedule an alert five seconds later. Names are hidden by default and can be enabled explicitly.
+
+Reminders are stored per account on this device and scheduled locally, including while the app is closed. Turning reminders off, archiving a medicine or signing out cancels the associated alerts. Alerts repeat daily until disabled or archived; they do not interpret free-text prescription duration or stop automatically when a dose is marked taken. Changes from another device take effect after this phone syncs. Phone timezone, battery restrictions and notification settings can affect delivery. A new APK build is required to include the notifications plugin; local notifications can also be tested with compatible Expo Go. Physical-device delivery must be verified using the test button.

@@ -2,14 +2,19 @@ import React from "react";
 import { useWindowDimensions } from "react-native";
 import { Redirect, Tabs } from "expo-router";
 import { useClinic } from "../../store";
+import { cloudMode } from "../../cloud-config";
+import { useLoginAudience } from "../../login-audience";
 import { Icon, theme } from "../../components";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 export default function TabLayout() {
   const { state, ready } = useClinic();
+  const { audience, ready: audienceReady } = useLoginAudience();
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
-  if (!ready) return null;
+  if (!ready || (cloudMode && !audienceReady)) return null;
   if (!state.session) return <Redirect href="/sign-in" />;
+  if (cloudMode && audience === "Doctor" && state.session.role !== "Doctor")
+    return <Redirect href="/doctor-entry" />;
 
   const isSmallScreen = height < 680;
   const bottomPadding = insets.bottom > 0 ? insets.bottom : isSmallScreen ? 4 : 6;
@@ -88,6 +93,16 @@ export default function TabLayout() {
           title: "Records",
           tabBarIcon: ({ color }) => (
             <Icon name="folder-open-outline" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="patients"
+        options={{
+          title: "Patients",
+          href: state.session.role === "Doctor" ? undefined : null,
+          tabBarIcon: ({ color }) => (
+            <Icon name="people-outline" color={color} />
           ),
         }}
       />
