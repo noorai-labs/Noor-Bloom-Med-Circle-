@@ -370,13 +370,14 @@ export function GoogleLogin() {
                     onPress={() => {
                       void WebBrowser.openBrowserAsync(
                         GOOGLE_RECOVERY_URL,
-                      ).catch(() =>
+                      ).catch(() => {
+                        setHelpOpen(false);
                         setAuthFlow({
                           busy: false,
                           error:
                             "Could not open Google recovery. Visit accounts.google.com/signin/recovery in your browser.",
-                        }),
-                      );
+                        });
+                      });
                     }}
                   />
                 )}
