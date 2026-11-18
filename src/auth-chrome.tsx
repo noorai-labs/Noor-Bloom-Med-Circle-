@@ -1,4 +1,4 @@
-import React, { useSyncExternalStore } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import {
   Image,
   ImageSourcePropType,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { BloomLogo } from "./branding";
 import { brand, Role, roles } from "./clinic";
@@ -422,78 +423,92 @@ export function PortalRoleGrid({
   role,
   onSelect,
   disabled,
+  availableRoles = roles,
 }: {
+  availableRoles?: Role[];
   role: Role;
   onSelect: (next: Role) => void;
   disabled?: boolean;
 }) {
+  const { fontScale } = useWindowDimensions();
+  const [availableWidth, setAvailableWidth] = useState(0);
+  const singleColumn = availableWidth / fontScale < 340;
   return (
-    <View style={{ gap: 10 }}>
+    <View
+      onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
+      style={{ gap: 10 }}
+    >
       <Label>Select your role</Label>
       <View style={{ gap: 8 }}>
         {PORTAL_SIGNUP_ROWS.map((row, rowIndex) => (
-          <View key={rowIndex} style={{ flexDirection: "row", gap: 8 }}>
-            {row.map((r) => {
-              const details = AUTH_ROLE_DETAILS[r];
-              const active = role === r;
-              return (
-                <View key={r} style={{ flex: 1 }}>
-                  <Touch
-                    label={`Select ${details.title}`}
-                    selected={active}
-                    disabled={disabled}
-                    onPress={() => onSelect(r)}
-                    style={{
-                      width: "100%",
-                      minHeight: 54,
-                      paddingVertical: 10,
-                      paddingHorizontal: 10,
-                      borderRadius: 15,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 8,
-                      backgroundColor: active ? "#F2FAF7" : "#FAFCFB",
-                      borderWidth: active ? 1.5 : 1,
-                      borderColor: active ? theme.green : "#E2ECE7",
-                      shadowColor: active ? theme.green : "transparent",
-                      shadowOffset: { width: 0, height: 1 },
-                      shadowOpacity: active ? 0.08 : 0,
-                      shadowRadius: 3,
-                      elevation: active ? 1 : 0,
-                    }}
-                  >
-                    <View
+          <View
+            key={rowIndex}
+            style={{ flexDirection: singleColumn ? "column" : "row", gap: 8 }}
+          >
+            {row
+              .filter((r) => availableRoles.includes(r))
+              .map((r) => {
+                const details = AUTH_ROLE_DETAILS[r];
+                const active = role === r;
+                return (
+                  <View key={r} style={{ flex: 1 }}>
+                    <Touch
+                      label={`Select ${details.title}`}
+                      selected={active}
+                      disabled={disabled}
+                      onPress={() => onSelect(r)}
                       style={{
-                        width: 30,
-                        height: 30,
+                        width: "100%",
+                        minHeight: 54,
+                        paddingVertical: 10,
+                        paddingHorizontal: 10,
                         borderRadius: 15,
-                        backgroundColor: active ? details.badgeColor : "#ECF1EF",
+                        flexDirection: "row",
                         alignItems: "center",
-                        justifyContent: "center",
+                        gap: 8,
+                        backgroundColor: active ? "#F2FAF7" : "#FAFCFB",
+                        borderWidth: active ? 1.5 : 1,
+                        borderColor: active ? theme.green : "#E2ECE7",
+                        shadowColor: active ? theme.green : "transparent",
+                        shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: active ? 0.08 : 0,
+                        shadowRadius: 3,
+                        elevation: active ? 1 : 0,
                       }}
                     >
-                      <Icon
-                        name={details.icon}
-                        size={15}
-                        color={active ? details.iconColor : theme.muted}
-                      />
-                    </View>
-                    <Text
-                      numberOfLines={2}
-                      style={{
-                        flex: 1,
-                        fontSize: 13,
-                        lineHeight: 16,
-                        fontWeight: active ? "700" : "600",
-                        color: active ? theme.ink : theme.muted,
-                      }}
-                    >
-                      {details.title}
-                    </Text>
-                  </Touch>
-                </View>
-              );
-            })}
+                      <View
+                        style={{
+                          width: 30,
+                          height: 30,
+                          borderRadius: 15,
+                          backgroundColor: active
+                            ? details.badgeColor
+                            : "#ECF1EF",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Icon
+                          name={details.icon}
+                          size={15}
+                          color={active ? details.iconColor : theme.muted}
+                        />
+                      </View>
+                      <Text
+                        style={{
+                          flex: 1,
+                          fontSize: 13,
+                          lineHeight: 16,
+                          fontWeight: active ? "700" : "600",
+                          color: active ? theme.ink : theme.muted,
+                        }}
+                      >
+                        {details.title}
+                      </Text>
+                    </Touch>
+                  </View>
+                );
+              })}
           </View>
         ))}
       </View>
@@ -534,7 +549,9 @@ export function RoleChooserModal({
   role,
   onSelect,
   onClose,
+  availableRoles = roles,
 }: {
+  availableRoles?: Role[];
   visible: boolean;
   role: Role;
   onSelect: (next: Role) => void;
@@ -602,7 +619,7 @@ export function RoleChooserModal({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ gap: 10, paddingBottom: 6 }}
           >
-            {roles
+            {availableRoles
               .filter((r) => r !== "Patient")
               .map((r) => {
                 const details = AUTH_ROLE_DETAILS[r];
@@ -719,7 +736,9 @@ export function AuthSignInShell({
   onCreateAccountPress,
   onHelpPress,
   footerNote,
+  children,
 }: {
+  children?: React.ReactNode;
   role: Role;
   height: number;
   busy?: boolean;
@@ -767,6 +786,7 @@ export function AuthSignInShell({
             onRightAction={role === "Patient" ? undefined : onOpenMoreRoles}
           />
 
+          {children}
           {!!notice && <Body muted>{notice}</Body>}
 
           <View style={{ gap: 12 }}>

@@ -907,6 +907,7 @@ export function OtpInput({
   length = 6,
   error,
   autoFocus = false,
+  editable = true,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -914,6 +915,7 @@ export function OtpInput({
   length?: number;
   error?: string;
   autoFocus?: boolean;
+  editable?: boolean;
 }) {
   const [focus, setFocus] = useState(false);
   const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
@@ -922,6 +924,7 @@ export function OtpInput({
   const digits = Array.from({ length }, (_, i) => value[i] || "");
 
   function handleChange(text: string) {
+    if (!editable) return;
     const cleaned = text.replace(/\D/g, "").slice(0, length);
     onChange(cleaned);
     if (cleaned.length === length) {
@@ -932,6 +935,7 @@ export function OtpInput({
   return (
     <View style={{ gap: 8, width: "100%" }}>
       <Touch
+        disabled={!editable}
         label="Enter 6-digit verification code"
         onPress={() => inputRef.current?.focus()}
         style={{
@@ -990,6 +994,7 @@ export function OtpInput({
 
       {/* Hidden real input for accessibility, keyboard input, copy/paste, and auto-focus */}
       <TextInput
+        editable={editable}
         ref={inputRef}
         value={value}
         onChangeText={handleChange}
@@ -1221,9 +1226,7 @@ export function Empty({
               marginTop: 4,
             }}
           >
-            {action && onPress && (
-              <Button title={action} onPress={onPress} />
-            )}
+            {action && onPress && <Button title={action} onPress={onPress} />}
             {secondaryAction && onSecondaryPress && (
               <Button
                 title={secondaryAction}
@@ -1359,7 +1362,7 @@ export function Screen({
         // Leave generous clearance for the submit button and action rows below the input
         const visibleBottom = Math.min(
           top + viewportHeight,
-          keyboardTop.current ?? (top + viewportHeight),
+          keyboardTop.current ?? top + viewportHeight,
         );
         const overlap = y + fieldHeight + 175 - visibleBottom;
         if (y < top + 16) {

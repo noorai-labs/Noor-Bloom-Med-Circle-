@@ -45,7 +45,7 @@ const GOOGLE_RECOVERY_URL = "https://accounts.google.com/signin/recovery";
 export function GoogleLogin() {
   const { height } = useWindowDimensions();
   const { state, cloud } = useClinic();
-  const { isSignedIn, isLoaded } = useAuth();
+  const { isSignedIn, isLoaded, userId } = useAuth();
   const { startSSOFlow } = useSSO();
   const { busy, error } = useAuthFlow();
   const { audience, ready: audienceReady } = useLoginAudience();
@@ -60,11 +60,7 @@ export function GoogleLogin() {
 
   useEffect(() => {
     if (!audienceReady) return;
-    if (audience === "Patient" && portalRole !== "Patient") {
-      setPortalRole("Patient");
-    } else if (audience === "Doctor" && portalRole === "Patient") {
-      setPortalRole("Doctor");
-    }
+    if (portalRole !== audience) setPortalRole(audience);
   }, [audience, audienceReady, portalRole]);
 
   useEffect(() => {
@@ -84,11 +80,18 @@ export function GoogleLogin() {
     );
   }
 
+  const availableRoles: Role[] = cloud?.spaces.map((space) => space.role) || [];
+
   function selectRole(next: Role) {
+    // Patient/Doctor are entry intents before authentication; additional portals require membership.
+    if (
+      next !== "Patient" &&
+      next !== "Doctor" &&
+      !availableRoles.includes(next)
+    )
+      return;
     setPortalRole(next);
-    void setLoginAudience(next === "Patient" ? "Patient" : "Doctor").catch(
-      () => {},
-    );
+    void setLoginAudience(next).catch(() => {});
   }
 
   async function signIn() {
@@ -157,6 +160,29 @@ export function GoogleLogin() {
     }
   }
 
+  async function selectSpace(id: string) {
+    setAuthFlow({ busy: true, error: "" });
+    try {
+      if (!cloud)
+        throw new Error("Your care space connection is not ready. Try again.");
+      await cloud.select(id);
+      setAuthFlow({ busy: false, error: "" });
+    } catch (failure) {
+      setAuthFlow({
+        busy: false,
+        error:
+          failure instanceof Error
+            ? failure.message
+            : "Could not open your care space. Try again.",
+      });
+    }
+  }
+
+  function openPersonalSpace() {
+    if (busy || !userId) return;
+    void selectSpace(`personal_${userId}`);
+  }
+
   function handleSignOut() {
     void cloud?.signOut().catch((failure) =>
       setAuthFlow({
@@ -169,12 +195,7 @@ export function GoogleLogin() {
     );
   }
 
-  const displayRole: Role =
-    audience === "Patient"
-      ? "Patient"
-      : portalRole === "Patient"
-        ? "Doctor"
-        : portalRole;
+  const displayRole: Role = audience;
 
   return (
     <AuthLayout>
@@ -195,7 +216,7 @@ export function GoogleLogin() {
                   onRetry={() => void cloud?.refresh()}
                   retryLabel="Retry connection"
                   secondaryAction="Open my personal care space"
-                  onSecondaryPress={() => void cloud?.select("")}
+                  onSecondaryPress={openPersonalSpace}
                 />
                 <Button
                   title="Sign out"
@@ -234,7 +255,8 @@ export function GoogleLogin() {
                   title="Open my personal care space"
                   secondary
                   icon="person-outline"
-                  onPress={() => void cloud?.select("")}
+                  disabled={busy || !userId}
+                  onPress={openPersonalSpace}
                 />
                 <Button
                   title="Sign out"
@@ -278,6 +300,7 @@ export function GoogleLogin() {
       )}
 
       <RoleChooserModal
+        availableRoles={availableRoles}
         visible={choosing}
         role={displayRole}
         onSelect={selectRole}

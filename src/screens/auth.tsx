@@ -266,6 +266,7 @@ function DemoAuthScreen() {
           onDismissError={() => setError("")}
           onRoleChange={selectRole}
           onOpenMoreRoles={() => setChoosing(true)}
+          googleTitle="Enter demo"
           onGooglePress={continueWithGoogle}
           onEmailPress={() => {
             setCreatingAccount(false);
@@ -279,7 +280,15 @@ function DemoAuthScreen() {
           }}
           onHelpPress={() => setHelpOpen(true)}
           footerNote="Local demo · Fictional data only"
-        />
+        >
+          {(role === "Doctor" || role === "Nurse") && (
+            <StaffProfileSelector
+              kind={role}
+              providerId={providerId}
+              onSelect={setProviderId}
+            />
+          )}
+        </AuthSignInShell>
       ) : (
         <>
           <AuthBrandHeader />
@@ -325,12 +334,8 @@ function DemoAuthScreen() {
                 </View>
                 <Body muted>
                   {step === "email"
-                    ? creatingAccount
-                      ? role !== "Patient"
-                        ? "Choose your role and enter your email for a 6-digit verification code."
-                        : "Join BLOOM MED with your email to get a 6-digit verification code."
-                      : "Enter your email or mobile number to receive a 6-digit sign-in code."
-                    : `Enter the 6-digit verification code sent to ${identifier || "your account"}.`}
+                    ? `${creatingAccount ? (role !== "Patient" ? "Choose your role and enter" : "Join the demo with") : "Enter"} your email or mobile number. No email or SMS code will arrive. On the next screen, enter 123456 or use the demo autofill button.`
+                    : `Demo for ${identifier || "your account"}: no email or SMS code will arrive. Enter 123456 or use the demo autofill button.`}
                 </Body>
               </View>
 
@@ -347,6 +352,13 @@ function DemoAuthScreen() {
                     <PortalRoleGrid role={role} onSelect={selectRole} />
                   )}
 
+                  {(role === "Doctor" || role === "Nurse") && (
+                    <StaffProfileSelector
+                      kind={role}
+                      providerId={providerId}
+                      onSelect={setProviderId}
+                    />
+                  )}
                   <Field
                     label={details.emailLabel}
                     value={identifier}

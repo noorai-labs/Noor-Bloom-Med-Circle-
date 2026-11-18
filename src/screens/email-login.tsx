@@ -69,11 +69,7 @@ export function EmailLogin({
 
   useEffect(() => {
     if (!audienceReady) return;
-    if (audience === "Patient" && portalRole !== "Patient") {
-      setPortalRole("Patient");
-    } else if (audience === "Doctor" && portalRole === "Patient") {
-      setPortalRole("Doctor");
-    }
+    if (portalRole !== audience) setPortalRole(audience);
   }, [audience, audienceReady, portalRole]);
 
   useEffect(() => {
@@ -88,19 +84,13 @@ export function EmailLogin({
   }, []);
 
   const loaded = login.isLoaded && signup.isLoaded;
-  const displayRole: Role =
-    audience === "Patient"
-      ? "Patient"
-      : portalRole === "Patient"
-        ? "Doctor"
-        : portalRole;
+  const displayRole: Role = audience;
   const details = AUTH_ROLE_DETAILS[displayRole];
 
   function selectRole(next: Role) {
+    if (!cloud?.spaces.some((space) => space.role === next)) return;
     setPortalRole(next);
-    void setLoginAudience(next === "Patient" ? "Patient" : "Doctor").catch(
-      () => {},
-    );
+    void setLoginAudience(next).catch(() => {});
     setError("");
   }
 
@@ -292,16 +282,21 @@ export function EmailLogin({
             </>
           ) : !attempt ? (
             <>
-              {creatingAccount && displayRole !== "Patient" && (
-                <PortalRoleGrid
-                  role={displayRole}
-                  disabled={busy}
-                  onSelect={selectRole}
-                />
-              )}
+              {creatingAccount &&
+                displayRole !== "Patient" &&
+                !!cloud?.spaces.some((space) => space.role !== "Patient") && (
+                  <PortalRoleGrid
+                    role={displayRole}
+                    availableRoles={
+                      cloud?.spaces.map((space) => space.role) || []
+                    }
+                    disabled={busy}
+                    onSelect={selectRole}
+                  />
+                )}
 
               <Field
-                label={details.emailLabel}
+                label="Email address"
                 value={email}
                 onChange={(v) => {
                   setEmail(v);
@@ -436,8 +431,10 @@ export function EmailLogin({
                 <View style={{ gap: 8 }}>
                   <Label>6-digit verification code</Label>
                   <OtpInput
+                    editable={!busy}
                     value={code}
                     onChange={(v) => {
+                      if (inFlight.current) return;
                       setCode(v);
                       setError("");
                     }}
