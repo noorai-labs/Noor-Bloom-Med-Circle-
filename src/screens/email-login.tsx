@@ -1,22 +1,34 @@
-import { postLoginRoute } from "../login-routing";
-import { useLoginAudience } from "../login-audience";
 import React, { useEffect, useRef, useState } from "react";
-import { Keyboard, Text, View } from "react-native";
+import { ActivityIndicator, Keyboard, Text, View } from "react-native";
 import { useAuth } from "@clerk/expo";
 import { useSignIn, useSignUp } from "@clerk/expo/legacy";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
+import { Role } from "../clinic";
+import { postLoginRoute } from "../login-routing";
+import { setLoginAudience, useLoginAudience } from "../login-audience";
+import { AuthLayout } from "../auth-layout";
+import {
+  AUTH_ROLE_DETAILS,
+  AuthBrandHeader,
+  AuthFooter,
+  PortalRoleGrid,
+  setPortalRole,
+  usePortalRole,
+} from "../auth-chrome";
 import {
   Body,
   Button,
   Card,
+  Entrance,
+  ErrorBanner,
   Field,
   Icon,
-  Screen,
+  Label,
+  OtpInput,
+  Touch,
+  styles,
   theme,
-  Title,
-  Entrance,
 } from "../components";
-import { BloomLogo } from "../branding";
 import { useClinic } from "../store";
 import {
   authError,
@@ -28,12 +40,14 @@ import {
   verifyEmailCode,
   type EmailAttempt,
 } from "../email-auth";
+
 export function EmailLogin({
   creatingAccount = false,
 }: {
   creatingAccount?: boolean;
 }) {
-  const { audience } = useLoginAudience();
+  const { audience, ready: audienceReady } = useLoginAudience();
+  const portalRole = usePortalRole();
   const params = useLocalSearchParams<{ email?: string }>();
   const login = useSignIn();
   const signup = useSignUp();
@@ -52,6 +66,16 @@ export function EmailLogin({
   const [emailConfirmed, setEmailConfirmed] = useState(false);
   const inFlight = useRef(false);
   const resendAfter = useRef(0);
+
+  useEffect(() => {
+    if (!audienceReady) return;
+    if (audience === "Patient" && portalRole !== "Patient") {
+      setPortalRole("Patient");
+    } else if (audience === "Doctor" && portalRole === "Patient") {
+      setPortalRole("Doctor");
+    }
+  }, [audience, audienceReady, portalRole]);
+
   useEffect(() => {
     const timer = setInterval(
       () =>
@@ -62,8 +86,28 @@ export function EmailLogin({
     );
     return () => clearInterval(timer);
   }, []);
+
   const loaded = login.isLoaded && signup.isLoaded;
-  async function run(action: "send" | "resend" | "verify") {
+  const displayRole: Role =
+    audience === "Patient"
+      ? "Patient"
+      : portalRole === "Patient"
+        ? "Doctor"
+        : portalRole;
+  const details = AUTH_ROLE_DETAILS[displayRole];
+
+  function selectRole(next: Role) {
+    setPortalRole(next);
+    void setLoginAudience(next === "Patient" ? "Patient" : "Doctor").catch(
+      () => {},
+    );
+    setError("");
+  }
+
+  async function run(
+    action: "send" | "resend" | "verify",
+    overrideCode?: string,
+  ) {
     if (inFlight.current || !login.isLoaded || !signup.isLoaded) return;
     if (action === "resend" && Date.now() < resendAfter.current) return;
     inFlight.current = true;
@@ -84,9 +128,15 @@ export function EmailLogin({
         await resendEmailCode(login.signIn, signup.signUp, attempt);
         setCode("");
       } else if (action === "verify" && attempt) {
+        const activeCode = overrideCode ?? code;
         const session =
           pendingSession ||
-          (await verifyEmailCode(login.signIn, signup.signUp, attempt, code));
+          (await verifyEmailCode(
+            login.signIn,
+            signup.signUp,
+            attempt,
+            activeCode,
+          ));
         setPendingSession(session);
         Keyboard.dismiss();
         await login.setActive({ session });
@@ -109,97 +159,120 @@ export function EmailLogin({
       setBusy(false);
     }
   }
-  if (state.session)
+
+  if (state.session) {
+    if (!audienceReady) return null;
     return (
       <Redirect
         href={postLoginRoute(state.session, state.onboarded, audience)}
       />
     );
+  }
+
+  function handleBack() {
+    if (busy) return;
+    if (attempt) {
+      setAttempt(null);
+      setCode("");
+      setError("");
+      setPendingSession("");
+      setEmailConfirmed(false);
+      return;
+    }
+    router.replace("/sign-in");
+  }
+
   return (
-    <Screen noGuard maxWidth={480}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 12,
-          paddingVertical: 16,
-        }}
-      >
-        <BloomLogo size={44} />
-        <Text
-          style={{
-            color: theme.ink,
-            fontSize: 18,
-            fontWeight: "800",
-            letterSpacing: 1,
-          }}
-        >
-          BLOOM MED
-        </Text>
-      </View>
-      <Entrance>
-        <Card style={{ borderRadius: 28, padding: 22, gap: 18 }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
+    <AuthLayout>
+      <AuthBrandHeader />
+      <Entrance key={attempt ? "otp" : creatingAccount ? "signup" : "signin"}>
+        <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
+          <View style={{ gap: 6 }}>
             <View
               style={{
-                width: 52,
-                height: 52,
-                borderRadius: 18,
-                backgroundColor: theme.mint,
+                flexDirection: "row",
                 alignItems: "center",
-                justifyContent: "center",
+                gap: 10,
               }}
             >
-              <Icon
-                name={
-                  emailConfirmed || pendingSession || isSignedIn
-                    ? "checkmark-circle-outline"
-                    : "mail-outline"
-                }
-                size={28}
-              />
+              {!isSignedIn && (
+                <Touch
+                  label="Go back"
+                  disabled={busy}
+                  onPress={handleBack}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 17,
+                    backgroundColor: "#EEF4F1",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Icon name="arrow-back" size={18} color={theme.ink} />
+                </Touch>
+              )}
+              <Text
+                style={[
+                  styles.title,
+                  { fontSize: 20, lineHeight: 26, flexShrink: 1 },
+                ]}
+              >
+                {isSignedIn
+                  ? "Opening your care space"
+                  : attempt
+                    ? emailConfirmed
+                      ? "Email confirmed"
+                      : pendingSession
+                        ? "Ready to continue"
+                        : "Verify your identity"
+                    : accountMissing
+                      ? "Account not found"
+                      : creatingAccount
+                        ? "Create your account"
+                        : "Continue with email"}
+              </Text>
             </View>
-            <Text
-              style={{
-                color: theme.green,
-                fontSize: 11,
-                fontWeight: "800",
-                letterSpacing: 1.4,
-              }}
-            >
-              {attempt
-                ? "02 / CONFIRM"
-                : creatingAccount
-                  ? "01 / JOIN"
-                  : "01 / EMAIL"}
-            </Text>
-          </View>
-          <Title>
-            {isSignedIn
-              ? "Opening your care space"
-              : attempt
-                ? emailConfirmed
-                  ? "Email confirmed"
+            {!isSignedIn && (
+              <Body muted>
+                {emailConfirmed
+                  ? "Your code worked. Your account needs one more setup change before you can continue."
                   : pendingSession
-                    ? "Ready to continue"
-                    : "Check your inbox"
-                : accountMissing
-                  ? "Account not found"
-                  : creatingAccount
-                    ? "Create your account"
-                    : "Sign in with email"}
-          </Title>
+                    ? "Your code is confirmed. Continue to open your care space."
+                    : attempt
+                      ? `Enter the 6-digit verification code sent to ${email}.`
+                      : accountMissing
+                        ? "No BLOOM MED account was found for this email."
+                        : creatingAccount
+                          ? displayRole !== "Patient"
+                            ? "Choose your role and enter your email for a 6-digit verification code."
+                            : "Join BLOOM MED with your email to get a 6-digit verification code."
+                          : "We will email you a one-time 6-digit sign-in code."}
+              </Body>
+            )}
+          </View>
+
+          {!!error && (
+            <ErrorBanner message={error} onDismiss={() => setError("")} />
+          )}
+
           {isSignedIn ? (
             <>
-              <Body muted>
-                {cloud?.error || "Connecting your account securely..."}
-              </Body>
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                  paddingVertical: 6,
+                }}
+              >
+                {!cloud?.error && (
+                  <ActivityIndicator color={theme.green} size="small" />
+                )}
+                <Body muted style={{ flexShrink: 1 }}>
+                  {cloud?.error || "Connecting your account securely…"}
+                </Body>
+              </View>
               {!!cloud?.error && (
                 <>
                   <Button
@@ -208,7 +281,8 @@ export function EmailLogin({
                   />
                   <Button
                     title="Sign out"
-                    secondary
+                    outline
+                    icon="log-out-outline"
                     onPress={() => {
                       void cloud.signOut().catch((e) => setError(authError(e)));
                     }}
@@ -216,231 +290,232 @@ export function EmailLogin({
                 </>
               )}
             </>
+          ) : !attempt ? (
+            <>
+              {creatingAccount && displayRole !== "Patient" && (
+                <PortalRoleGrid
+                  role={displayRole}
+                  disabled={busy}
+                  onSelect={selectRole}
+                />
+              )}
+
+              <Field
+                label={details.emailLabel}
+                value={email}
+                onChange={(v) => {
+                  setEmail(v);
+                  setError("");
+                  setAccountMissing(false);
+                }}
+                placeholder={details.defaultEmail}
+                inputProps={{
+                  editable: !busy,
+                  autoCapitalize: "none",
+                  autoCorrect: false,
+                  keyboardType: "email-address",
+                  autoComplete: "email",
+                  returnKeyType: "go",
+                  onSubmitEditing: () => void run("send"),
+                }}
+              />
+
+              {!accountMissing && (
+                <Button
+                  title={
+                    creatingAccount
+                      ? `Create ${details.title} account`
+                      : "Send sign-in code"
+                  }
+                  icon="arrow-forward"
+                  loading={busy}
+                  disabled={!loaded || busy || !email.trim()}
+                  onPress={() => void run("send")}
+                />
+              )}
+
+              {accountMissing && (
+                <Button
+                  title="Create account"
+                  icon="person-add-outline"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/email-sign-up",
+                      params: { email: email.trim() },
+                    })
+                  }
+                />
+              )}
+            </>
+          ) : emailConfirmed ? (
+            <Button
+              title="Use Google instead"
+              icon="logo-google"
+              onPress={() => router.replace("/sign-in")}
+            />
           ) : (
             <>
-              <Body muted>
-                {emailConfirmed
-                  ? "Your code worked. Your account needs one more setup change before you can continue."
-                  : pendingSession
-                    ? "Your code is confirmed. Continue to open your care space."
-                    : attempt
-                      ? "Enter the six-digit code we sent to your inbox."
-                      : accountMissing
-                        ? "No BLOOM MED account was found for this email."
-                        : creatingAccount
-                          ? "Join BLOOM MED with your email. We will send a code to confirm it belongs to you."
-                          : "We will email you a one-time sign-in code."}
-              </Body>
-              {!!attempt && (
+              <View
+                style={{
+                  padding: 12,
+                  backgroundColor: "#F4F8F6",
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: "#D8EAE0",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
                 <View
                   style={{
-                    backgroundColor: theme.mint,
-                    borderRadius: 14,
-                    padding: 12,
-                    flexDirection: "row",
-                    gap: 8,
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    backgroundColor: details.badgeColor,
                     alignItems: "center",
+                    justifyContent: "center",
                   }}
                 >
-                  <Icon name="mail-outline" size={17} />
+                  <Icon
+                    name={details.icon}
+                    size={18}
+                    color={details.iconColor}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
                   <Text
                     style={{
-                      color: theme.green,
-                      fontSize: 14,
-                      fontWeight: "600",
-                      flexShrink: 1,
+                      fontSize: 10,
+                      color: theme.muted,
+                      textTransform: "uppercase",
+                      fontWeight: "700",
+                      letterSpacing: 0.5,
                     }}
+                  >
+                    {creatingAccount ? "Creating" : "Signing in as"}{" "}
+                    {details.title}
+                  </Text>
+                  <Text
+                    style={{
+                      fontWeight: "700",
+                      fontSize: 13,
+                      color: theme.ink,
+                    }}
+                    numberOfLines={1}
                   >
                     {email}
                   </Text>
                 </View>
-              )}
-              {!attempt ? (
-                <>
-                  <Field
-                    label="Email address"
-                    value={email}
+                <Touch
+                  label="Use a different email"
+                  disabled={busy}
+                  onPress={handleBack}
+                  style={{
+                    backgroundColor: "white",
+                    paddingHorizontal: 8,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: "#D8EAE0",
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: "700",
+                      color: theme.green,
+                    }}
+                  >
+                    Change
+                  </Text>
+                </Touch>
+              </View>
+
+              {!pendingSession && (
+                <View style={{ gap: 8 }}>
+                  <Label>6-digit verification code</Label>
+                  <OtpInput
+                    value={code}
                     onChange={(v) => {
-                      setEmail(v);
+                      setCode(v);
                       setError("");
-                      setAccountMissing(false);
                     }}
-                    placeholder="you@example.com"
-                    inputProps={{
-                      editable: !busy,
-                      autoCapitalize: "none",
-                      autoCorrect: false,
-                      keyboardType: "email-address",
-                      autoComplete: "email",
-                      returnKeyType: "go",
-                      onSubmitEditing: () => void run("send"),
+                    onComplete={(val) => {
+                      void run("verify", val);
                     }}
+                    error={error}
+                    autoFocus
                   />
-                  {!accountMissing && (
-                    <Button
-                      title={
-                        creatingAccount
-                          ? "Create account and send code"
-                          : "Send sign-in code"
-                      }
-                      icon="arrow-forward"
-                      loading={busy}
-                      disabled={!loaded || busy || !email.trim()}
-                      onPress={() => void run("send")}
-                    />
-                  )}
-                  {accountMissing && (
-                    <Button
-                      title="Create account"
-                      icon="person-add-outline"
-                      onPress={() =>
-                        router.push({
-                          pathname: "/email-sign-up",
-                          params: { email: email.trim() },
-                        })
-                      }
-                    />
-                  )}
-                  {!creatingAccount && !accountMissing && (
-                    <Button
-                      title="New here? Create an account"
-                      secondary
-                      disabled={busy}
-                      onPress={() =>
-                        router.push({
-                          pathname: "/email-sign-up",
-                          params: { email: email.trim() },
-                        })
-                      }
-                    />
-                  )}
-                  {creatingAccount && (
-                    <Body muted>
-                      Already registered? Return to sign-in to receive your
-                      login code.
-                    </Body>
-                  )}
-                </>
-              ) : emailConfirmed ? (
-                <Button
-                  title="Use Google instead"
-                  icon="logo-google"
-                  onPress={() => router.replace("/sign-in")}
-                />
-              ) : (
-                <>
-                  {!pendingSession && (
-                    <Field
-                      label="Email verification code"
-                      value={code}
-                      onChange={(v) => {
-                        setCode(v.replace(/\D/g, "").slice(0, 6));
-                        setError("");
-                      }}
-                      numeric
-                      placeholder="6-digit code"
-                      inputProps={{
-                        editable: !busy,
-                        maxLength: 6,
-                        autoComplete: "one-time-code",
-                        textContentType: "oneTimeCode",
-                        returnKeyType: "go",
-                        onSubmitEditing: () => void run("verify"),
-                        autoFocus: true,
-                        style: {
-                          textAlign: "center",
-                          letterSpacing: 7,
-                          fontSize: 25,
-                          fontWeight: "700",
-                        },
-                      }}
-                    />
-                  )}
-                  <Button
-                    title={
-                      pendingSession
-                        ? "Open my care space"
-                        : "Verify and continue"
-                    }
-                    loading={busy}
-                    disabled={
-                      !loaded || busy || (!pendingSession && code.length !== 6)
-                    }
-                    onPress={() => void run("verify")}
-                  />
-                  {!pendingSession && (
-                    <Button
-                      title={
-                        cooldown
-                          ? "Resend code in " + cooldown + "s"
-                          : "Resend code"
-                      }
-                      secondary
-                      disabled={busy || cooldown > 0}
-                      onPress={() => void run("resend")}
-                    />
-                  )}
-                  <Button
-                    title="Use a different email"
-                    secondary
-                    disabled={busy}
-                    onPress={() => {
-                      setAttempt(null);
-                      setCode("");
-                      setError("");
-                      setPendingSession("");
-                      setEmailConfirmed(false);
-                    }}
-                  />
-                  <Body muted>
-                    Check your spam folder too. Only use the most recent code.
-                    Never share it with anyone.
-                  </Body>
-                </>
+                </View>
               )}
+
+              <Button
+                title={
+                  pendingSession
+                    ? "Open my care space"
+                    : "Verify and continue"
+                }
+                icon="arrow-forward"
+                loading={busy}
+                disabled={
+                  !loaded || busy || (!pendingSession && code.length !== 6)
+                }
+                onPress={() => void run("verify")}
+              />
+
+              {!pendingSession && (
+                <Button
+                  title={
+                    cooldown
+                      ? "Resend code in " + cooldown + "s"
+                      : "Resend code"
+                  }
+                  secondary
+                  disabled={busy || cooldown > 0}
+                  onPress={() => void run("resend")}
+                />
+              )}
+
+              <Body muted>
+                Check your spam folder too. Only use the most recent code. Never
+                share it with anyone.
+              </Body>
             </>
-          )}
-          {!!error && (
-            <Text
-              accessibilityLiveRegion="polite"
-              style={{
-                color: theme.red,
-                lineHeight: 22,
-                backgroundColor: "#FCF0F2",
-                padding: 12,
-                borderRadius: 12,
-              }}
-            >
-              {error}
-            </Text>
           )}
         </Card>
       </Entrance>
-      {!isSignedIn && (
-        <Button
-          title={
-            creatingAccount
-              ? "Already have an account? Sign in"
-              : "Back to sign-in options"
-          }
-          secondary
-          disabled={busy}
-          onPress={() =>
-            router.replace(creatingAccount ? "/email-sign-in" : "/sign-in")
-          }
-        />
-      )}
-      <View style={{ alignItems: "center", gap: 8, paddingVertical: 10 }}>
-        <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
-          <Icon name="shield-checkmark-outline" size={15} />
-          <Text style={{ color: theme.muted, fontSize: 12 }}>
-            A secure sign-in to your care space
-          </Text>
+
+      {!isSignedIn && !attempt && (
+        <View style={{ alignItems: "center", gap: 4 }}>
+          <Touch
+            label={
+              creatingAccount
+                ? "Sign in with an existing account"
+                : "Create a BLOOM MED account"
+            }
+            disabled={busy}
+            onPress={() =>
+              router.replace({
+                pathname: creatingAccount ? "/email-sign-in" : "/email-sign-up",
+                params: email.trim() ? { email: email.trim() } : undefined,
+              })
+            }
+            style={{ paddingVertical: 8, paddingHorizontal: 14 }}
+          >
+            <Text style={{ fontSize: 13, color: theme.muted }}>
+              {creatingAccount
+                ? "Already have an account? "
+                : "New to BLOOM MED? "}
+              <Text style={{ color: theme.green, fontWeight: "700" }}>
+                {creatingAccount ? "Sign in" : "Create account"}
+              </Text>
+            </Text>
+          </Touch>
         </View>
-        <Text style={{ color: theme.muted, fontSize: 11 }}>
-          NoorAI Labs - Your care, connected.
-        </Text>
-      </View>
-    </Screen>
+      )}
+
+      <AuthFooter note="Your care, kept private." />
+    </AuthLayout>
   );
 }

@@ -1,11 +1,19 @@
-import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, Modal, Platform, Text, View, useWindowDimensions } from "react-native";
+import React, { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Modal,
+  Platform,
+  ScrollView,
+  View,
+  useWindowDimensions,
+} from "react-native";
+import { isRunningInExpoGo } from "expo";
 import Constants, { ExecutionEnvironment } from "expo-constants";
-import { useAuth, useClerk, useSSO } from "@clerk/expo";
-import { Redirect } from "expo-router";
+import { useAuth, useSSO } from "@clerk/expo";
+import { Redirect, router } from "expo-router";
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
-import { BloomLogo } from "../branding";
+import { Role } from "../clinic";
 import { useClinic } from "../store";
 import {
   Body,
@@ -14,43 +22,48 @@ import {
   Entrance,
   ErrorBanner,
   ErrorState,
-  Field,
-  Icon,
-  OtpInput,
-  SlideDownFade,
   theme,
   Title,
-  Touch,
 } from "../components";
 import { setAuthFlow, useAuthFlow } from "../auth-flow";
-import { GentleMotion } from "../welcome";
 import { AuthLayout } from "../auth-layout";
-import { createEmailAccount, sendEmailCode, verifyEmailCode, type EmailAttempt } from "../email-auth";
+import {
+  AuthBrandHeader,
+  AuthFooter,
+  AuthSignInShell,
+  RoleChooserModal,
+  setPortalRole,
+  usePortalRole,
+} from "../auth-chrome";
+import { setLoginAudience, useLoginAudience } from "../login-audience";
+import { postLoginRoute } from "../login-routing";
 
 WebBrowser.maybeCompleteAuthSession();
 
 export function GoogleLogin() {
   const { height } = useWindowDimensions();
   const { state, cloud } = useClinic();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, isLoaded } = useAuth();
   const { startSSOFlow } = useSSO();
-  const clerk = useClerk();
   const { busy, error } = useAuthFlow();
-
-  const [method, setMethod] = useState<"options" | "email" | "email_otp">("options");
-  const [email, setEmail] = useState("");
-  const [submittedEmail, setSubmittedEmail] = useState("");
-  const sendRequestIdRef = useRef(0);
-  const [otpCode, setOtpCode] = useState("");
-  const [emailSubmitting, setEmailSubmitting] = useState(false);
-  const [emailError, setEmailError] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [emailAttempt, setEmailAttempt] = useState<EmailAttempt | null>(null);
+  const { audience, ready: audienceReady } = useLoginAudience();
+  const portalRole = usePortalRole();
+  const [choosing, setChoosing] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
   const expoGo =
     Platform.OS !== "web" &&
-    Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+    (isRunningInExpoGo() ||
+      Constants.executionEnvironment === ExecutionEnvironment.StoreClient);
+
+  useEffect(() => {
+    if (!audienceReady) return;
+    if (audience === "Patient" && portalRole !== "Patient") {
+      setPortalRole("Patient");
+    } else if (audience === "Doctor" && portalRole === "Patient") {
+      setPortalRole("Doctor");
+    }
+  }, [audience, audienceReady, portalRole]);
 
   useEffect(() => {
     if (Platform.OS !== "android") return;
@@ -60,16 +73,21 @@ export function GoogleLogin() {
     };
   }, []);
 
-  if (state.session)
+  if (state.session) {
+    if (!audienceReady) return null;
     return (
       <Redirect
-        href={
-          state.session.role === "Patient" && !state.onboarded
-            ? "/onboarding"
-            : "/(tabs)"
-        }
+        href={postLoginRoute(state.session, state.onboarded, audience)}
       />
     );
+  }
+
+  function selectRole(next: Role) {
+    setPortalRole(next);
+    void setLoginAudience(next === "Patient" ? "Patient" : "Doctor").catch(
+      () => {},
+    );
+  }
 
   async function signIn() {
     if (expoGo) {
@@ -79,7 +97,7 @@ export function GoogleLogin() {
       });
       return;
     }
-    if (busy) return;
+    if (busy || !isLoaded) return;
     setAuthFlow({ busy: true, error: "" });
     let failureMessage = "";
     try {
@@ -90,6 +108,7 @@ export function GoogleLogin() {
       if (__DEV__) console.info("[Google sign-in] callback:", redirectUrl);
       const result = await startSSOFlow({
         strategy: "oauth_google",
+        oidcPrompt: "select_account",
         redirectUrl,
       });
       if (__DEV__)
@@ -136,433 +155,132 @@ export function GoogleLogin() {
     }
   }
 
-  async function handleSendEmailCode() {
-    if (emailSubmitting) return;
-    const cleanEmail = (method === "email_otp" && submittedEmail ? submittedEmail : email).trim();
-    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) {
-      setEmailError("Enter a valid email address.");
-      return;
-    }
-    const reqId = ++sendRequestIdRef.current;
-    setEmailSubmitting(true);
-    setEmailError("");
-    setSubmittedEmail(cleanEmail);
-    try {
-      const attempt = isSignUp
-        ? await createEmailAccount(clerk.client.signUp, cleanEmail)
-        : await sendEmailCode(clerk.client.signIn, clerk.client.signUp, cleanEmail);
-      if (sendRequestIdRef.current === reqId) {
-        setEmailAttempt(attempt);
-        setMethod("email_otp");
-      }
-    } catch (err: unknown) {
-      if (sendRequestIdRef.current === reqId) {
-        const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
-        const msg =
-          clerkErr?.errors?.[0]?.longMessage ||
-          clerkErr?.errors?.[0]?.message ||
-          (err instanceof Error ? err.message : "Failed to send verification code.");
-        setEmailError(msg);
-      }
-    } finally {
-      if (sendRequestIdRef.current === reqId) {
-        setEmailSubmitting(false);
-      }
-    }
+  function handleSignOut() {
+    void cloud?.signOut().catch((failure) =>
+      setAuthFlow({
+        busy: false,
+        error:
+          failure instanceof Error
+            ? failure.message
+            : "Could not sign out. Try again.",
+      }),
+    );
   }
 
-  async function handleVerifyEmailCode(targetCode?: string) {
-    if (emailSubmitting) return;
-    const cleanCode = (typeof targetCode === "string" ? targetCode : otpCode).trim();
-    setEmailSubmitting(true);
-    setEmailError("");
-    try {
-      if (!emailAttempt) throw new Error("Request an email code first.");
-      const session = await verifyEmailCode(
-        clerk.client.signIn, clerk.client.signUp, emailAttempt, cleanCode,
-      );
-      await clerk.setActive({ session });
-    } catch (err: unknown) {
-      const clerkErr = err as { errors?: { code?: string; longMessage?: string; message?: string }[] };
-      const msg =
-        clerkErr?.errors?.[0]?.longMessage ||
-        clerkErr?.errors?.[0]?.message ||
-        (err instanceof Error ? err.message : "Invalid verification code.");
-      setEmailError(msg);
-    } finally {
-      setEmailSubmitting(false);
-    }
-  }
+  const displayRole: Role =
+    audience === "Patient"
+      ? "Patient"
+      : portalRole === "Patient"
+        ? "Doctor"
+        : portalRole;
 
   return (
     <AuthLayout>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 10,
-          marginVertical: 4,
-        }}
-      >
-        <BloomLogo size={42} />
-        <View style={{ flex: 1 }}>
-          <Text
-            style={{
-              fontSize: 19,
-              fontWeight: "800",
-              letterSpacing: 1.2,
-              color: theme.ink,
-            }}
-          >
-            BLOOM MED
-          </Text>
-          <Text style={{ fontSize: 11, color: theme.muted, fontWeight: "500" }}>
-            A gentler way to care at home
-          </Text>
-        </View>
-      </View>
-
-      {method === "options" && height > 620 && (
-        <GentleMotion>
-          <View>
-            <Image
-              source={require("../../assets/care-welcome.png")}
-              style={{
-                width: "100%",
-                height: Math.min(160, Math.max(110, height - 640)),
-                borderRadius: 22,
-              }}
-              resizeMode="cover"
-            />
-            <View
-              style={{
-                position: "absolute",
-                bottom: 12,
-                left: 12,
-                backgroundColor: "#FFFFFFF2",
-                borderRadius: 14,
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                flexDirection: "row",
-                gap: 6,
-                alignItems: "center",
-              }}
-            >
-              <Icon name="heart-outline" size={16} />
-              <Text
-                style={{ color: theme.green, fontSize: 12, fontWeight: "700" }}
-              >
-                A little closer to care
-              </Text>
-            </View>
-          </View>
-        </GentleMotion>
-      )}
-
-      <Title>Care that stays with you.</Title>
-      <Body muted>Care, records and support in one place.</Body>
-
-      <Entrance>
-        {isSignedIn ? (
-          cloud?.error ? (
-            <Card style={{ gap: 16 }}>
-              <ErrorState
-                title="Couldn’t connect to care space"
-                message={
-                  cloud.error.includes("Failed to fetch") || cloud.error.includes("Network")
-                    ? "Couldn’t reach the care server. Please check your internet connection and try again."
-                    : cloud.error
-                }
-                onRetry={() => void cloud?.refresh()}
-                retryLabel="Try again"
-                secondaryAction="Open personal care space"
-                onSecondaryPress={() => void cloud?.select("")}
-              />
-              <Button
-                title="Sign out"
-                outline
-                icon="log-out-outline"
-                onPress={() => void cloud?.signOut()}
-              />
-            </Card>
-          ) : (
-            <Card style={{ gap: 16 }}>
-              <Title small>Connect your care space</Title>
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 10,
-                  paddingVertical: 8,
-                }}
-              >
-                <ActivityIndicator color={theme.green} size="small" />
-                <Body muted style={{ flexShrink: 1 }}>
-                  Connecting to your secure cloud care space…
-                </Body>
-              </View>
-              <Button
-                title="Open my personal care space"
-                secondary
-                icon="person-outline"
-                onPress={() => void cloud?.select("")}
-              />
-              <Button
-                title="Sign out"
-                outline
-                icon="log-out-outline"
-                onPress={() => void cloud?.signOut()}
-              />
-            </Card>
-          )
-        ) : method === "email" ? (
-          <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
-            <SlideDownFade>
-              <View style={{ gap: 14 }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 8,
-                    marginBottom: 2,
-                  }}
-                >
-                  <Touch
-                    label="Back to options"
-                    disabled={emailSubmitting}
-                    onPress={() => {
-                      if (emailSubmitting) return;
-                      sendRequestIdRef.current++;
-                      setMethod("options");
-                      setEmailError("");
-                    }}
-                    style={{ padding: 4 }}
-                  >
-                    <Icon name="arrow-back" size={20} color={theme.ink} />
-                  </Touch>
-                  <Title small>
-                    {isSignUp ? "Create your account" : "Continue with email"}
-                  </Title>
-                </View>
-
-                <Body muted>
-                  {isSignUp
-                    ? "Enter your email address to set up your secure care space."
-                    : "Enter your email address to receive a secure sign-in code."}
-                </Body>
-
-                <Field
-                  label="Email address"
-                  value={email}
-                  inputProps={{ editable: !emailSubmitting }}
-                  onChange={(val) => {
-                    if (emailSubmitting) return;
-                    setEmail(val);
-                    setEmailError("");
-                  }}
-                  placeholder="you@example.com"
-                  error={emailError}
-                />
-
-                <Button
-                  title={
-                    emailSubmitting
-                      ? "Sending code…"
-                      : "Send verification code"
+      {isSignedIn ? (
+        <>
+          <AuthBrandHeader />
+          <Entrance>
+            {cloud?.error ? (
+              <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
+                <ErrorState
+                  title="Couldn’t connect to care space"
+                  message={
+                    cloud.error.includes("Failed to fetch") ||
+                    cloud.error.includes("Network")
+                      ? "Couldn’t reach the care server. Please check your internet connection and try again."
+                      : cloud.error
                   }
-                  icon="arrow-forward"
-                  disabled={emailSubmitting}
-                  loading={emailSubmitting}
-                  onPress={handleSendEmailCode}
+                  onRetry={() => void cloud?.refresh()}
+                  retryLabel="Retry connection"
+                  secondaryAction="Open my personal care space"
+                  onSecondaryPress={() => void cloud?.select("")}
                 />
-              </View>
-            </SlideDownFade>
-          </Card>
-        ) : method === "email_otp" ? (
-          <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
-            <SlideDownFade>
-              <View style={{ gap: 14 }}>
+                <Button
+                  title="Sign out"
+                  outline
+                  icon="log-out-outline"
+                  onPress={handleSignOut}
+                />
+                {!!error && (
+                  <ErrorBanner
+                    message={error}
+                    onDismiss={() => setAuthFlow({ busy: false, error: "" })}
+                  />
+                )}
+              </Card>
+            ) : (
+              <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
+                <Title small>Connect your care space</Title>
                 <View
                   style={{
                     flexDirection: "row",
                     alignItems: "center",
-                    gap: 8,
-                    marginBottom: 2,
+                    gap: 10,
+                    paddingVertical: 6,
                   }}
                 >
-                  <Touch
-                    label="Back"
-                    disabled={emailSubmitting}
-                    onPress={() => {
-                      if (emailSubmitting) return;
-                      setMethod("email");
-                      setEmailError("");
-                    }}
-                    style={{ padding: 4 }}
-                  >
-                    <Icon name="arrow-back" size={20} color={theme.ink} />
-                  </Touch>
-                  <Title small>Check your inbox</Title>
+                  <ActivityIndicator color={theme.green} size="small" />
+                  <Body muted style={{ flexShrink: 1 }}>
+                    Loading your cloud care space…
+                  </Body>
                 </View>
-
-                <Body muted>
-                  We sent a 6-digit verification code to{" "}
-                  <Text style={{ color: theme.ink, fontWeight: "700" }}>
-                    {submittedEmail || email}
-                  </Text>
-                  .
-                </Body>
-
-                <View style={{ gap: 8 }}>
-                  <Text style={{ fontSize: 13, fontWeight: "700", color: theme.ink }}>
-                    6-digit verification code
-                  </Text>
-                  <OtpInput
-                    value={otpCode}
-                    onChange={(val) => {
-                      setOtpCode(val);
-                      if (emailError) setEmailError("");
-                    }}
-                    onComplete={(val) => {
-                      void handleVerifyEmailCode(val);
-                    }}
-                    error={emailError}
-                    autoFocus
-                  />
-                </View>
-
                 <Button
-                  title={emailSubmitting ? "Verifying…" : "Verify & Continue"}
-                  disabled={emailSubmitting || otpCode.length < 6}
-                  loading={emailSubmitting}
-                  onPress={() => void handleVerifyEmailCode(otpCode)}
+                  title="Retry connection"
+                  onPress={() => void cloud?.refresh()}
                 />
-
-                <Touch
-                  label="Resend code"
-                  disabled={emailSubmitting}
-                  onPress={() => {
-                    if (!emailSubmitting) void handleSendEmailCode();
-                  }}
-                  style={{ alignSelf: "center", paddingVertical: 4 }}
-                >
-                  <Text
-                    style={{
-                      fontSize: 13,
-                      color: emailSubmitting ? theme.muted : theme.green,
-                      fontWeight: "600",
-                    }}
-                  >
-                    {"Didn't get a code? Resend"}
-                  </Text>
-                </Touch>
-              </View>
-            </SlideDownFade>
-          </Card>
-        ) : (
-          <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
-            <Title small>Welcome back</Title>
-            {expoGo && (
-              <Body muted>
-                Google sign-in needs the installed BLOOM MED development app;
-                Expo Go cannot complete this callback.
-              </Body>
+                <Button
+                  title="Open my personal care space"
+                  secondary
+                  icon="person-outline"
+                  onPress={() => void cloud?.select("")}
+                />
+                <Button
+                  title="Sign out"
+                  outline
+                  icon="log-out-outline"
+                  onPress={handleSignOut}
+                />
+                {!!error && (
+                  <ErrorBanner
+                    message={error}
+                    onDismiss={() => setAuthFlow({ busy: false, error: "" })}
+                  />
+                )}
+              </Card>
             )}
-
-            <View style={{ gap: 12 }}>
-              <Button
-                title={busy ? "Opening Google…" : "Continue with Google"}
-                icon="logo-google"
-                disabled={busy}
-                onPress={signIn}
-              />
-              <Button
-                title="Continue with email"
-                outline
-                icon="mail-outline"
-                disabled={busy}
-                onPress={() => {
-                  setMethod("email");
-                  setIsSignUp(false);
-                  setEmailError("");
-                }}
-              />
-            </View>
-
-            {!!error && (
-              <ErrorBanner
-                message={error}
-                onDismiss={() => {
-                  setAuthFlow({ busy: false, error: "" });
-                }}
-              />
-            )}
-          </Card>
-        )}
-      </Entrance>
-
-      {!isSignedIn && method === "options" && (
-        <View style={{ alignItems: "center", gap: 12, marginTop: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-            <Text style={{ fontSize: 13, color: theme.muted }}>
-              New to BLOOM MED?
-            </Text>
-            <Touch
-              label="Create account"
-              disabled={busy}
-              onPress={() => {
-                setMethod("email");
-                setIsSignUp(true);
-                setEmailError("");
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 13,
-                  color: theme.green,
-                  fontWeight: "700",
-                }}
-              >
-                Create account
-              </Text>
-            </Touch>
-          </View>
-          <Touch
-            label="Need help signing in?"
-            onPress={() => setHelpOpen(true)}
-          >
-            <Text style={{ fontSize: 13, color: theme.muted }}>
-              Need help signing in?
-            </Text>
-          </Touch>
-        </View>
+          </Entrance>
+          <AuthFooter note="Your care, kept private." />
+        </>
+      ) : (
+        <AuthSignInShell
+          role={displayRole}
+          height={height}
+          busy={busy}
+          actionsDisabled={!isLoaded || !audienceReady}
+          googleTitle={busy ? "Opening Google…" : "Continue with Google"}
+          notice={
+            expoGo
+              ? "Google sign-in needs the installed BLOOM MED development app; Expo Go cannot complete this callback."
+              : undefined
+          }
+          error={error}
+          onDismissError={() => setAuthFlow({ busy: false, error: "" })}
+          onRoleChange={selectRole}
+          onOpenMoreRoles={() => setChoosing(true)}
+          onGooglePress={signIn}
+          onEmailPress={() => router.push("/email-sign-in")}
+          onCreateAccountPress={() => router.push("/email-sign-up")}
+          onHelpPress={() => setHelpOpen(true)}
+          footerNote="Your care, kept private."
+        />
       )}
 
-      <View
-        style={{
-          alignItems: "center",
-          gap: 4,
-          marginTop: 14,
-          marginBottom: 16,
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "center",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <Icon name="shield-checkmark-outline" size={15} color={theme.green} />
-          <Text style={{ fontSize: 12, color: theme.muted }}>
-            Your care, kept private.
-          </Text>
-        </View>
-        <Text style={{ fontSize: 11, color: theme.muted, fontWeight: "500" }}>
-          NoorAI Labs
-        </Text>
-      </View>
+      <RoleChooserModal
+        visible={choosing}
+        role={displayRole}
+        onSelect={selectRole}
+        onClose={() => setChoosing(false)}
+      />
 
       <Modal
         visible={helpOpen}
@@ -573,38 +291,51 @@ export function GoogleLogin() {
         <View
           style={{
             flex: 1,
-            backgroundColor: "#00000077",
+            backgroundColor: "#162C3580",
             justifyContent: "center",
             padding: 24,
           }}
         >
-          <Card>
-            <Title small>Need help signing in?</Title>
-            <Body muted>
-              If you have trouble accessing your care space or haven&apos;t received
-              your verification code, our support team is available 24/7.
-            </Body>
-            <View
-              style={{
-                backgroundColor: "#F2F7F5",
-                padding: 14,
-                borderRadius: 12,
-                gap: 6,
-              }}
-            >
-              <Text
-                style={{ fontWeight: "700", color: theme.ink, fontSize: 13 }}
-              >
-                Care Coordinator Desk
-              </Text>
-              <Text style={{ fontSize: 13, color: theme.muted }}>
-                Email: support@bloommed.in
-              </Text>
-              <Text style={{ fontSize: 13, color: theme.muted }}>
-                Hours: 24/7 Priority Support
-              </Text>
-            </View>
-            <Button title="Got it" onPress={() => setHelpOpen(false)} />
+          <Card style={{ maxHeight: "85%", borderRadius: 24, padding: 20 }}>
+            <ScrollView>
+              <View style={{ gap: 14 }}>
+                <Title small>Get back to your care space</Title>
+                <Body>
+                  Use the same Google account you originally used with BLOOM
+                  MED. A different account opens a separate care space.
+                </Body>
+                <Body muted>
+                  Your Google password and account recovery are managed by
+                  Google. BLOOM MED never asks you to share your password or
+                  recovery codes.
+                </Body>
+                <Button
+                  title="Recover my Google account"
+                  onPress={() => {
+                    void WebBrowser.openBrowserAsync(
+                      "https://accounts.google.com/signin/recovery",
+                    ).catch(() =>
+                      setAuthFlow({
+                        busy: false,
+                        error:
+                          "Could not open Google recovery. Visit accounts.google.com/signin/recovery in your browser.",
+                      }),
+                    );
+                  }}
+                />
+                <Body muted>
+                  If Google sign-in succeeds but your care space does not load,
+                  use Retry connection. If you see a required-field error,
+                  contact BLOOM MED support with the error text; do not send
+                  identity documents or passwords.
+                </Body>
+              </View>
+            </ScrollView>
+            <Button
+              title="Back to login"
+              secondary
+              onPress={() => setHelpOpen(false)}
+            />
           </Card>
         </View>
       </Modal>

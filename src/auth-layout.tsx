@@ -139,9 +139,9 @@ export function AuthLayout({ children }: { children: React.ReactNode }) {
               maxWidth: 480,
               alignSelf: "center",
               paddingHorizontal: 20,
-              paddingTop: keyboardOpen || height < 640 ? 10 : 18,
-              paddingBottom: keyboardOpen ? 340 : Math.max(20, insets.bottom + 8),
-              gap: keyboardOpen ? 10 : 14,
+              paddingTop: keyboardOpen || height < 640 ? 10 : 14,
+              paddingBottom: keyboardOpen ? 340 : Math.max(28, insets.bottom + 16),
+              gap: keyboardOpen ? 10 : 12,
               justifyContent: keyboardOpen || height < 640 ? "flex-start" : "center",
             }}
             keyboardShouldPersistTaps="handled"
