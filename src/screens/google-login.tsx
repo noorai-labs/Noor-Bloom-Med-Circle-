@@ -4,13 +4,14 @@ import {
   Modal,
   Platform,
   ScrollView,
+  Text,
   View,
   useWindowDimensions,
 } from "react-native";
 import { isRunningInExpoGo } from "expo";
 import Constants, { ExecutionEnvironment } from "expo-constants";
 import { useAuth, useSSO } from "@clerk/expo";
-import { Redirect, router } from "expo-router";
+import { Link, Redirect, router } from "expo-router";
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { Role } from "../clinic";
@@ -39,6 +40,7 @@ import { setLoginAudience, useLoginAudience } from "../login-audience";
 import { postLoginRoute } from "../login-routing";
 
 WebBrowser.maybeCompleteAuthSession();
+const GOOGLE_RECOVERY_URL = "https://accounts.google.com/signin/recovery";
 
 export function GoogleLogin() {
   const { height } = useWindowDimensions();
@@ -309,20 +311,52 @@ export function GoogleLogin() {
                   Google. BLOOM MED never asks you to share your password or
                   recovery codes.
                 </Body>
-                <Button
-                  title="Recover my Google account"
-                  onPress={() => {
-                    void WebBrowser.openBrowserAsync(
-                      "https://accounts.google.com/signin/recovery",
-                    ).catch(() =>
-                      setAuthFlow({
-                        busy: false,
-                        error:
-                          "Could not open Google recovery. Visit accounts.google.com/signin/recovery in your browser.",
-                      }),
-                    );
-                  }}
-                />
+                {Platform.OS === "web" ? (
+                  <View style={{ gap: 8 }}>
+                    <Link
+                      href={GOOGLE_RECOVERY_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        backgroundColor: theme.green,
+                        borderRadius: 16,
+                        paddingVertical: 14,
+                        paddingHorizontal: 18,
+                        textAlign: "center",
+                        color: "white",
+                        fontSize: 15,
+                        fontWeight: "700",
+                      }}
+                    >
+                      Recover my Google account
+                    </Link>
+                    <Text
+                      selectable
+                      style={{
+                        fontSize: 12,
+                        color: theme.muted,
+                        textAlign: "center",
+                      }}
+                    >
+                      Or open directly: accounts.google.com/signin/recovery
+                    </Text>
+                  </View>
+                ) : (
+                  <Button
+                    title="Recover my Google account"
+                    onPress={() => {
+                      void WebBrowser.openBrowserAsync(
+                        GOOGLE_RECOVERY_URL,
+                      ).catch(() =>
+                        setAuthFlow({
+                          busy: false,
+                          error:
+                            "Could not open Google recovery. Visit accounts.google.com/signin/recovery in your browser.",
+                        }),
+                      );
+                    }}
+                  />
+                )}
                 <Body muted>
                   If Google sign-in succeeds but your care space does not load,
                   use Retry connection. If you see a required-field error,
