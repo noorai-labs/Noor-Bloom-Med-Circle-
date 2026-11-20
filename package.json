@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "bloom-med",
   "version": "1.0.0",
   "main": "expo-router/entry",
@@ -59,7 +59,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/clinic-test.cjs && node scripts/email-auth-test.cjs && node scripts/reminder-test.cjs && node scripts/login-routing-test.cjs",
+    "test": "node scripts/clinic-test.cjs && node scripts/email-auth-test.cjs && node scripts/reminder-test.cjs && node scripts/login-routing-test.cjs && node scripts/voice-test.cjs",
+    "test:voice": "node scripts/voice-test.cjs",
     "build:web": "expo export --platform web",
     "format": "prettier --write App.tsx src scripts README.md",
     "lint": "expo lint",

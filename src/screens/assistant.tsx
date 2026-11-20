@@ -1,4 +1,4 @@
-import { cloudMode } from "../cloud-config";
+﻿import { cloudMode } from "../cloud-config";
 import { providerFor } from "../provider-display";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
@@ -18,18 +18,27 @@ import {
   Title,
   Touch,
 } from "../components";
+import { VoiceModal } from "../voice-modal";
+
 export default function AssistantScreen() {
+  const [voiceOpen, setVoiceOpen] = useState(false);
+
   if (cloudMode)
     return (
       <Screen title="Care navigation">
         <Card>
-          <Title small>Open your care workspace</Title>
+          <Title small>Voice & Care Navigation</Title>
           <Body>
-            Use your appointments, records and medicines directly. The assistant
-            is not connected.
+            Speak to navigate your care space, check medicines, or open records.
           </Body>
           <Button
+            title="Open Voice Assistant"
+            icon="mic"
+            onPress={() => setVoiceOpen(true)}
+          />
+          <Button
             title="Open appointments"
+            secondary
             onPress={() => router.push("/(tabs)/appointments")}
           />
           <Button
@@ -38,10 +47,16 @@ export default function AssistantScreen() {
             onPress={() => router.push("/(tabs)/records")}
           />
         </Card>
+        <VoiceModal
+          visible={voiceOpen}
+          onClose={() => setVoiceOpen(false)}
+          defaultLanguage="en-IN"
+        />
       </Screen>
     );
   return <DemoAssistantScreen />;
 }
+
 function DemoAssistantScreen() {
   const { state } = useClinic();
   const [messages, setMessages] = useState([
@@ -54,12 +69,14 @@ function DemoAssistantScreen() {
   const [thinking, setThinking] = useState(false);
   const [voice, setVoice] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
     },
     [],
   );
+
   function send(value: string) {
     if (!value.trim() || thinking) return;
     const t = value.toLowerCase();
@@ -104,6 +121,7 @@ function DemoAssistantScreen() {
       setThinking(false);
     }, 650);
   }
+
   return (
     <Screen
       title="A little help from Bloom"
@@ -115,11 +133,12 @@ function DemoAssistantScreen() {
           <View style={{ flex: 1 }}>
             <Title small>Here for the everyday</Title>
             <Body muted>
-              Local mock assistant. Not a substitute for a doctor.
+              Voice & text care assistant. Not a substitute for a doctor.
             </Body>
           </View>
         </View>
       </Card>
+
       {messages.map((m, i) => (
         <View
           key={i}
@@ -146,7 +165,9 @@ function DemoAssistantScreen() {
           </Text>
         </View>
       ))}
+
       {thinking && <Body muted>Bloom is thinking…</Body>}
+
       <View style={styles.wrap}>
         {[
           "My next appointment",
@@ -157,12 +178,14 @@ function DemoAssistantScreen() {
           <Chip key={t} title={t} onPress={() => send(t)} />
         ))}
       </View>
+
       <Field
         label="Message Bloom"
         value={text}
         onChange={setText}
         placeholder="How can I help with your care?"
       />
+
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
           <Button
@@ -173,38 +196,20 @@ function DemoAssistantScreen() {
           />
         </View>
         <Touch
-          label="Simulated voice assistant"
-          onPress={() => setVoice(!voice)}
+          label="Voice assistant"
+          onPress={() => setVoice(true)}
           style={[styles.iconButton, { height: 52, width: 52 }]}
         >
           <Icon name="mic-outline" />
         </Touch>
       </View>
-      {voice && (
-        <Card>
-          <Title small>Try a voice command</Title>
-          <Body muted>
-            Simulated input · No microphone recording. Preferred language:{" "}
-            {state.profile.language}.
-          </Body>
-          {[
-            "Book a doctor",
-            "Show my reports",
-            "When is my next appointment?",
-            "Remind me about my medicine",
-          ].map((t) => (
-            <Button
-              key={t}
-              title={t}
-              secondary
-              onPress={() => {
-                send(t);
-                setVoice(false);
-              }}
-            />
-          ))}
-        </Card>
-      )}
+
+      <VoiceModal
+        visible={voice}
+        onClose={() => setVoice(false)}
+        defaultLanguage={(state.profile?.language as any) || "en-IN"}
+      />
+
       <Title small>Take the next step</Title>
       <View style={styles.wrap}>
         <Chip title="Find care →" onPress={() => router.push("/discover")} />
