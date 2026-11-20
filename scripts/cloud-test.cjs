@@ -145,7 +145,7 @@ async function request(
           : body,
   });
   const data = await response.json();
-  return { status: response.status, data };
+  return { status: response.status, data, headers: response.headers };
 }
 async function main() {
   const forged = await mf.dispatchFetch("http://test/v1/state", {
@@ -384,6 +384,230 @@ async function main() {
     crossVisitUpdate.data.error,
     "This visit belongs to another care professional.",
   );
+
+  // 5. Concurrency Test: Competing bookings for the exact same slot by different patients
+  const secondPatient = await request("user_patient_b", "/v1/state");
+  assert.equal(secondPatient.status, 200);
+  const spaceB = secondPatient.data.spaceId;
+  let revisionB = secondPatient.data.revision;
+  const endpointB = "/v1/actions?space=" + spaceB;
+  const onboardB = await request("user_patient_b", endpointB, "POST", {
+    revision: revisionB,
+    action: {
+      type: "profile",
+      profile: {
+        ...secondPatient.data.state.profile,
+        name: "Patient B",
+        age: "28",
+        address: "Address B",
+      },
+      onboarding: true,
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(onboardB.status, 200);
+  revisionB = onboardB.data.revision;
+
+  const competingOpA = randomUUID();
+  const competingOpB = randomUUID();
+  const [resA, resB] = await Promise.all([
+    request("user_patient", endpoint, "POST", {
+      revision,
+      action: {
+        type: "book",
+        visit: {
+          providerId: "1",
+          date: day2,
+          time: "02:00 PM",
+          service: "Home Visit",
+          frequency: "One visit",
+          address: "Address A",
+          reason: "Consult A",
+        },
+      },
+      operationId: competingOpA,
+    }),
+    request("user_patient_b", endpointB, "POST", {
+      revision: revisionB,
+      action: {
+        type: "book",
+        visit: {
+          providerId: "1",
+          date: day2,
+          time: "02:00 PM",
+          service: "Home Visit",
+          frequency: "One visit",
+          address: "Address B",
+          reason: "Consult B",
+        },
+      },
+      operationId: competingOpB,
+    }),
+  ]);
+
+  const competingStatuses = [resA.status, resB.status].sort();
+  assert.deepEqual(
+    competingStatuses,
+    [200, 409],
+    "Exactly one competing booking must succeed and one must be rejected with 409",
+  );
+  const conflictRes = resA.status === 409 ? resA : resB;
+  const successRes = resA.status === 200 ? resA : resB;
+  assert.equal(
+    conflictRes.data.error,
+    "This slot is already booked for this care professional.",
+  );
+  if (resA.status === 200) {
+    revision = resA.data.revision;
+    state = resA.data.state;
+  } else {
+    revisionB = resB.data.revision;
+  }
+
+  // Verify only 1 active slot exists in appointment_slots
+  const bookedSlots = await db
+    .prepare(
+      "SELECT * FROM appointment_slots WHERE provider_id='1' AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')",
+    )
+    .bind(day2, "02:00 PM")
+    .all();
+  assert.equal(
+    bookedSlots.results.length,
+    1,
+    "Only one accepted booking record can exist in database",
+  );
+
+  // 6. Idempotency Test: Resending identical operationId does NOT create duplicate booking
+  const winningUser = resA.status === 200 ? "user_patient" : "user_patient_b";
+  const winningEndpoint = resA.status === 200 ? endpoint : endpointB;
+  const winningOp = resA.status === 200 ? competingOpA : competingOpB;
+  const winningRevision = resA.status === 200 ? revision : revisionB;
+
+  const replay = await request(winningUser, winningEndpoint, "POST", {
+    revision: winningRevision,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "02:00 PM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address A",
+        reason: "Consult A",
+      },
+    },
+    operationId: winningOp,
+  });
+  assert.equal(replay.status, 200, "Idempotent replay must succeed with 200");
+  assert.equal(
+    replay.headers.get("x-idempotent-replay"),
+    "true",
+    "Must indicate idempotent replay in headers",
+  );
+
+  const afterReplaySlots = await db
+    .prepare(
+      "SELECT * FROM appointment_slots WHERE provider_id='1' AND date=? AND time=?",
+    )
+    .bind(day2, "02:00 PM")
+    .all();
+  assert.equal(
+    afterReplaySlots.results.length,
+    1,
+    "Idempotent retry must not create a second booking slot",
+  );
+
+  // 7. Reschedule Conflict Test & Lifecycle audit attribution
+  const losingUser = resA.status === 409 ? "user_patient" : "user_patient_b";
+  const losingEndpoint = resA.status === 409 ? endpoint : endpointB;
+  let losingRev = resA.status === 409 ? revision : revisionB;
+
+  const losingBook = await request(losingUser, losingEndpoint, "POST", {
+    revision: losingRev,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "04:30 PM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address X",
+        reason: "Consult X",
+      },
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(losingBook.status, 200);
+  losingRev = losingBook.data.revision;
+  const losingVisitId =
+    losingBook.data.state.visits[losingBook.data.state.visits.length - 1].id;
+
+  // Attempting to reschedule to the already booked 02:00 PM slot must fail with 409
+  const badReschedule = await request(losingUser, losingEndpoint, "POST", {
+    revision: losingRev,
+    action: {
+      type: "reschedule",
+      visitId: losingVisitId,
+      date: day2,
+      time: "02:00 PM",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(badReschedule.status, 409);
+  assert.equal(badReschedule.data.error, "That slot is already booked.");
+
+  // Cancellation frees the slot and records audit attribution
+  const winningVisitId =
+    successRes.data.state.visits[successRes.data.state.visits.length - 1].id;
+  const cancelRes = await request(winningUser, winningEndpoint, "POST", {
+    revision: winningRevision,
+    action: {
+      type: "status",
+      visitId: winningVisitId,
+      status: "Cancelled",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(cancelRes.status, 200);
+  if (resA.status === 200) {
+    revision = cancelRes.data.revision;
+    state = cancelRes.data.state;
+  } else {
+    revisionB = cancelRes.data.revision;
+  }
+
+  // Audit attribution check
+  const auditLogs = await db
+    .prepare(
+      "SELECT * FROM security_audit WHERE actor_id=? AND action='care.status'",
+    )
+    .bind(winningUser)
+    .all();
+  assert.ok(
+    auditLogs.results.length >= 1,
+    "Audit attribution must be recorded on cancellation",
+  );
+
+  // Once freed, rescheduling to 02:00 PM now succeeds!
+  const freedReschedule = await request(losingUser, losingEndpoint, "POST", {
+    revision: losingRev,
+    action: {
+      type: "reschedule",
+      visitId: losingVisitId,
+      date: day2,
+      time: "02:00 PM",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(freedReschedule.status, 200);
+  if (resA.status === 409) {
+    revision = freedReschedule.data.revision;
+    state = freedReschedule.data.state;
+  } else {
+    revisionB = freedReschedule.data.revision;
+  }
   await mutate("user_patient", {
     type: "dose",
     medicineId: state.medicines[0].id,

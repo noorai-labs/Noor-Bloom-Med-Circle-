@@ -545,16 +545,44 @@ async function route(
           "The patient needs an active manual identity review before booking.",
         );
     }
+    if (JSON.stringify(snapshot.state).includes(operationId)) {
+      return Response.json(visibleSnapshot(snapshot), {
+        headers: { "X-Idempotent-Replay": "true" },
+      });
+    }
     if (revision !== snapshot.revision)
       throw new HttpError(
         409,
         "Care data changed on another device. Refresh and try again.",
       );
-    if (JSON.stringify(snapshot.state).includes(operationId))
-      throw new HttpError(
-        409,
-        "This update has already been applied. Refresh your care data.",
+    if (action.type === "book") {
+      const existingSlot = await env.DB.prepare(
+        "SELECT id FROM appointment_slots WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')",
+      )
+        .bind(action.visit.providerId, action.visit.date, action.visit.time)
+        .first();
+      if (existingSlot) {
+        throw new HttpError(
+          409,
+          "This slot is already booked for this care professional.",
+        );
+      }
+    }
+    if (action.type === "reschedule") {
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
       );
+      if (currentVisit) {
+        const targetSlot = await env.DB.prepare(
+          "SELECT id FROM appointment_slots WHERE provider_id=? AND date=? AND time=? AND visit_id!=? AND status IN ('Requested', 'Confirmed', 'In Progress')",
+        )
+          .bind(currentVisit.providerId, action.date, action.time, action.visitId)
+          .first();
+        if (targetSlot) {
+          throw new HttpError(409, "That slot is already booked.");
+        }
+      }
+    }
     if (
       ["record", "deleteRecord"].includes(action.type) &&
       snapshot.state.session?.role !== "Patient"
@@ -631,7 +659,70 @@ async function route(
         ),
       );
     }
-    const saved = await env.DB.batch(statements);
+    if (action.type === "book") {
+      const newVisit =
+        next.visits.find((v) => v.id.includes(operationId)) ||
+        next.visits[next.visits.length - 1];
+      if (newVisit) {
+        statements.push(
+          env.DB.prepare(
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) VALUES (?,?,?,?,?,?,?)",
+          ).bind(
+            `slot_${space}_${newVisit.id}`,
+            newVisit.providerId,
+            newVisit.date,
+            newVisit.time,
+            space,
+            newVisit.id,
+            newVisit.status,
+          ),
+        );
+      }
+    }
+    if (action.type === "reschedule") {
+      const visit = next.visits.find((v) => v.id === action.visitId);
+      if (visit) {
+        statements.push(
+          env.DB.prepare(
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET date=excluded.date, time=excluded.time, status=excluded.status, updated_at=CURRENT_TIMESTAMP",
+          ).bind(
+            `slot_${space}_${action.visitId}`,
+            visit.providerId,
+            action.date,
+            action.time,
+            space,
+            action.visitId,
+            visit.status,
+          ),
+        );
+      }
+    }
+    if (action.type === "status") {
+      statements.push(
+        env.DB.prepare(
+          "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=?",
+        ).bind(action.status, space, action.visitId),
+      );
+    }
+    let saved;
+    try {
+      saved = await env.DB.batch(statements);
+    } catch (dbError: unknown) {
+      const msg = dbError instanceof Error ? dbError.message : String(dbError);
+      if (
+        msg.includes("UNIQUE constraint failed") ||
+        msg.includes("constraint failed")
+      ) {
+        if (action.type === "reschedule") {
+          throw new HttpError(409, "That slot is already booked.");
+        }
+        throw new HttpError(
+          409,
+          "This slot is already booked for this care professional.",
+        );
+      }
+      throw dbError;
+    }
     if (!saved[0].meta.changes)
       throw new HttpError(409, "Care data changed. Refresh and try again.");
     if (
