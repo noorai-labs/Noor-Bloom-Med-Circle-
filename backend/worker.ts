@@ -758,7 +758,17 @@ async function route(
           env.DB.prepare(
             `
             UPDATE appointment_slots
-            SET space_id = COALESCE((
+            SET id = COALESCE((
+                  SELECT 'slot_' || care_spaces.id || '_' || json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), id),
+                space_id = COALESCE((
                   SELECT care_spaces.id
                   FROM care_spaces, json_each(care_spaces.state, '$.visits')
                   WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
@@ -792,6 +802,11 @@ async function route(
             WHERE space_id=? AND visit_id=? AND changes() > 0
           `,
           ).bind(
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
             space,
             action.visitId,
             currentVisit.providerId,
