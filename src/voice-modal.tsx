@@ -1,6 +1,7 @@
 /**
  * Voice Assistant Modal Component for BLOOM MED
  * Part of Week 2 deliverable: feature/roshan/voice-help-prototype
+ * Features real-time microphone listening (STT) and voice speech synthesis (TTS)
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -26,6 +27,7 @@ import {
   Touch,
 } from "./components";
 import {
+  isSpeechRecognitionSupported,
   MOCK_TEST_PHRASES,
   speechAdapter,
   SUPPORTED_VOICE_LANGUAGES,
@@ -55,22 +57,23 @@ export function VoiceModal({
     null
   );
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [isLiveListening, setIsLiveListening] = useState<boolean>(false);
 
   const [pulseAnim] = useState(() => new Animated.Value(1));
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelLiveListeningRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (status === "listening") {
+    if (status === "listening" || isLiveListening) {
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
             toValue: 1.25,
-            duration: 650,
+            duration: 600,
             useNativeDriver: Platform.OS !== "web",
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
-            duration: 650,
+            duration: 600,
             useNativeDriver: Platform.OS !== "web",
           }),
         ])
@@ -78,72 +81,150 @@ export function VoiceModal({
     } else {
       pulseAnim.setValue(1);
     }
-  }, [status, pulseAnim]);
+  }, [status, isLiveListening, pulseAnim]);
 
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      stopAll();
     };
   }, []);
 
-  function handleStop() {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+  function stopAll() {
+    if (cancelLiveListeningRef.current) {
+      cancelLiveListeningRef.current();
+      cancelLiveListeningRef.current = null;
+    }
+    speechAdapter.stopLiveListening();
+    speechAdapter.stopSpeaking();
+    setIsLiveListening(false);
     setStatus("idle");
+  }
+
+  function handleStop() {
+    stopAll();
     setErrorMsg("");
   }
 
   function handleRetry() {
-    handleStop();
-    setTranscript("");
-    setResolution(null);
-  }
-
-  async function processPhrase(phrase: string) {
-    handleStop();
+    stopAll();
     setTranscript("");
     setResolution(null);
     setErrorMsg("");
+  }
+
+  async function handleSpokenTranscript(finalText: string) {
+    if (!finalText.trim()) return;
+
+    setTranscript(finalText);
+    setStatus("processing");
+    setIsLiveListening(false);
+
+    try {
+      const intentRes = speechAdapter.resolveIntent(
+        finalText,
+        selectedLanguage
+      );
+      setResolution(intentRes);
+
+      setStatus("speaking");
+      await speechAdapter.synthesizeSpeech(
+        intentRes.spokenResponse,
+        selectedLanguage
+      );
+      setStatus("idle");
+    } catch {
+      setStatus("error");
+      setErrorMsg("Error generating speech response.");
+    }
+  }
+
+  function startMicrophoneListening() {
+    stopAll();
+    setTranscript("");
+    setResolution(null);
+    setErrorMsg("");
+
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
+
+    if (!isSpeechRecognitionSupported()) {
+      // Fallback if browser doesn't have webkitSpeechRecognition
+      processPresetPhrase("Show my medicines");
+      return;
+    }
+
+    setIsLiveListening(true);
     setStatus("listening");
+
+    const cleanup = speechAdapter.startLiveListening(selectedLanguage, {
+      onListeningStart: () => {
+        setStatus("listening");
+        setIsLiveListening(true);
+      },
+      onInterimTranscript: (interim) => {
+        setTranscript(interim);
+      },
+      onFinalTranscript: (finalText) => {
+        handleSpokenTranscript(finalText);
+      },
+      onError: (err) => {
+        setIsLiveListening(false);
+        setStatus("error");
+        setErrorMsg(err);
+      },
+      onEnd: () => {
+        setIsLiveListening(false);
+      },
+    });
+
+    cancelLiveListeningRef.current = cleanup;
+  }
+
+  async function processPresetPhrase(phrase: string) {
+    stopAll();
+    setTranscript(phrase);
+    setResolution(null);
+    setErrorMsg("");
+    setStatus("processing");
 
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
 
-    timeoutRef.current = setTimeout(async () => {
-      setStatus("processing");
+    try {
+      const intentRes = speechAdapter.resolveIntent(phrase, selectedLanguage);
+      setResolution(intentRes);
 
-      try {
-        const result = await speechAdapter.transcribeTestAudio(
-          phrase,
-          selectedLanguage
-        );
-        setTranscript(result.transcript);
-
-        const intentRes = speechAdapter.resolveIntent(
-          result.transcript,
-          selectedLanguage
-        );
-        setResolution(intentRes);
-
-        setStatus("speaking");
-        const tts = await speechAdapter.synthesizeSpeech(
-          intentRes.spokenResponse,
-          selectedLanguage
-        );
-
-        timeoutRef.current = setTimeout(() => {
-          setStatus("idle");
-        }, tts.durationMs);
-      } catch {
-        setStatus("error");
-        setErrorMsg("Could not process audio. Please try again or type.");
-      }
-    }, 700);
+      setStatus("speaking");
+      await speechAdapter.synthesizeSpeech(
+        intentRes.spokenResponse,
+        selectedLanguage
+      );
+      setStatus("idle");
+    } catch {
+      setStatus("error");
+      setErrorMsg("Could not synthesize speech.");
+    }
   }
 
   function handleNavigate(route: string) {
+    stopAll();
     onClose();
     router.push(route as any);
+  }
+
+  function handleMicPress() {
+    if (status === "speaking") {
+      speechAdapter.stopSpeaking();
+      setStatus("idle");
+      return;
+    }
+    if (isLiveListening || status === "listening") {
+      stopAll();
+      return;
+    }
+    startMicrophoneListening();
   }
 
   return (
@@ -151,7 +232,10 @@ export function VoiceModal({
       visible={visible}
       animationType="slide"
       transparent={true}
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        stopAll();
+        onClose();
+      }}
     >
       <View style={localStyles.overlay}>
         <View style={localStyles.container}>
@@ -159,29 +243,43 @@ export function VoiceModal({
           <View style={localStyles.header}>
             <View style={globalStyles.row}>
               <Icon name="mic" color={theme.green} size={24} />
-              <Title small>Voice Assistant</Title>
+              <Title small>Voice Assistant (Live Audio)</Title>
             </View>
-            <Touch onPress={onClose} label="Close">
+            <Touch
+              onPress={() => {
+                stopAll();
+                onClose();
+              }}
+              label="Close"
+            >
               <Icon name="close-circle-outline" color={theme.muted} size={26} />
             </Touch>
           </View>
 
           {/* Language Selector */}
-          <View style={{ marginBottom: 16 }}>
+          <View style={{ marginBottom: 12 }}>
             <Body muted>Select language:</Body>
-            <View style={[globalStyles.row, { flexWrap: "wrap", gap: 8, marginTop: 8 }]}>
+            <View
+              style={[
+                globalStyles.row,
+                { flexWrap: "wrap", gap: 8, marginTop: 6 },
+              ]}
+            >
               {SUPPORTED_VOICE_LANGUAGES.map((lang) => (
                 <Chip
                   key={lang.code}
                   title={lang.nativeLabel}
                   selected={selectedLanguage === lang.code}
-                  onPress={() => setSelectedLanguage(lang.code)}
+                  onPress={() => {
+                    stopAll();
+                    setSelectedLanguage(lang.code);
+                  }}
                 />
               ))}
             </View>
           </View>
 
-          {/* Central Animated Visualizer */}
+          {/* Central Interactive Microphone Button */}
           <View style={localStyles.visualizerBox}>
             <Animated.View
               style={[
@@ -189,21 +287,21 @@ export function VoiceModal({
                 {
                   transform: [{ scale: pulseAnim }],
                   backgroundColor:
-                    status === "listening"
+                    status === "listening" || isLiveListening
                       ? "rgba(20, 125, 104, 0.2)"
+                      : status === "speaking"
+                      ? "rgba(85, 126, 185, 0.2)"
                       : "transparent",
                 },
               ]}
             >
               <Touch
-                onPress={() =>
-                  processPhrase(
-                    transcript || "When is my next appointment?"
-                  )
-                }
+                onPress={handleMicPress}
                 style={[
                   localStyles.micButton,
-                  status === "listening" && { backgroundColor: theme.green },
+                  (status === "listening" || isLiveListening) && {
+                    backgroundColor: theme.green,
+                  },
                   status === "speaking" && { backgroundColor: "#557EB9" },
                 ]}
                 label="Microphone Button"
@@ -214,7 +312,9 @@ export function VoiceModal({
                       ? "volume-high"
                       : status === "processing"
                       ? "hourglass-outline"
-                      : "mic"
+                      : isLiveListening || status === "listening"
+                      ? "mic"
+                      : "mic-outline"
                   }
                   color="white"
                   size={32}
@@ -223,15 +323,16 @@ export function VoiceModal({
             </Animated.View>
 
             <Text style={localStyles.statusText}>
-              {status === "idle" && "Tap a test command below or speak"}
-              {status === "listening" && "Listening... Speak your command"}
-              {status === "processing" && "Understanding audio..."}
-              {status === "speaking" && "Bloom is speaking..."}
+              {status === "idle" && "🎙️ Tap the mic to speak to Bloom"}
+              {(status === "listening" || isLiveListening) &&
+                "Listening to your microphone... (Speak now)"}
+              {status === "processing" && "Processing what you said..."}
+              {status === "speaking" && "🔊 Bloom is speaking aloud..."}
               {status === "error" && errorMsg}
             </Text>
           </View>
 
-          {/* Visible Transcript & Action Confirmation */}
+          {/* Real-time Visible Transcript & Spoken Response Card */}
           {transcript !== "" && (
             <Card style={localStyles.transcriptCard}>
               <Body muted>You said:</Body>
@@ -247,16 +348,23 @@ export function VoiceModal({
 
                   {resolution.isMedicalQuery && (
                     <View style={localStyles.guardrailBadge}>
-                      <Icon name="shield-checkmark" color={theme.red} size={16} />
+                      <Icon
+                        name="shield-checkmark"
+                        color={theme.red}
+                        size={16}
+                      />
                       <Text style={localStyles.guardrailText}>
-                        Clinical Guardrail: Diagnosis Refused
+                        Clinical Guardrail: Medical Advice Refused
                       </Text>
                     </View>
                   )}
 
                   {resolution.targetRoute && (
                     <Button
-                      title={`Open ${resolution.targetRoute.replace(/[\/()]/g, "")} →`}
+                      title={`Open ${resolution.targetRoute.replace(
+                        /[\/()]/g,
+                        ""
+                      )} →`}
                       onPress={() => handleNavigate(resolution.targetRoute!)}
                     />
                   )}
@@ -265,48 +373,68 @@ export function VoiceModal({
             </Card>
           )}
 
-          {/* Test Audio Commands (Slide 06 Requirement) */}
-          <View style={{ marginTop: 12 }}>
-            <Body muted>Try a test command (Test Audio Simulation):</Body>
-            <View style={{ gap: 6, marginTop: 8 }}>
-              {MOCK_TEST_PHRASES.slice(0, 4).map((p) => (
+          {/* Quick Simulation Options */}
+          <View style={{ marginTop: 8 }}>
+            <Body muted>Or try a sample query:</Body>
+            <View style={{ gap: 6, marginTop: 6 }}>
+              {MOCK_TEST_PHRASES.slice(0, 3).map((p) => (
                 <Touch
                   key={p}
                   style={localStyles.testPhraseButton}
-                  onPress={() => processPhrase(p)}
+                  onPress={() => processPresetPhrase(p)}
                   label={p}
                 >
-                  <Icon name="play-circle-outline" size={18} color={theme.green} />
+                  <Icon
+                    name="play-circle-outline"
+                    size={18}
+                    color={theme.green}
+                  />
                   <Text style={localStyles.testPhraseText}>{p}</Text>
                 </Touch>
               ))}
               <Touch
-                style={[localStyles.testPhraseButton, { borderColor: theme.red }]}
+                style={[
+                  localStyles.testPhraseButton,
+                  { borderColor: theme.red },
+                ]}
                 onPress={() =>
-                  processPhrase("What medicine should I take for headache?")
+                  processPresetPhrase("What medicine should I take for headache?")
                 }
                 label="Safety Guardrail Test"
               >
-                <Icon name="alert-circle-outline" size={18} color={theme.red} />
-                <Text style={[localStyles.testPhraseText, { color: theme.red }]}>
+                <Icon
+                  name="alert-circle-outline"
+                  size={18}
+                  color={theme.red}
+                />
+                <Text
+                  style={[localStyles.testPhraseText, { color: theme.red }]}
+                >
                   &ldquo;What medicine for headache?&rdquo; (Test Safety)
                 </Text>
               </Touch>
             </View>
           </View>
 
-          {/* Control Actions: Stop / Retry / Text Fallback */}
-          <View style={[globalStyles.row, { gap: 10, marginTop: 18 }]}>
-            {status !== "idle" && (
+          {/* Controls: Stop / Retry / Type Instead */}
+          <View style={[globalStyles.row, { gap: 10, marginTop: 14 }]}>
+            {(status !== "idle" || isLiveListening) && (
               <View style={{ flex: 1 }}>
-                <Button title="Stop" secondary danger onPress={handleStop} />
+                <Button title="Stop Audio" secondary danger onPress={handleStop} />
               </View>
             )}
             <View style={{ flex: 1 }}>
               <Button title="Retry" secondary onPress={handleRetry} />
             </View>
             <View style={{ flex: 1 }}>
-              <Button title="Type Instead" secondary onPress={onClose} />
+              <Button
+                title="Type Instead"
+                secondary
+                onPress={() => {
+                  stopAll();
+                  onClose();
+                }}
+              />
             </View>
           </View>
         </View>
@@ -326,23 +454,23 @@ const localStyles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 22,
-    maxHeight: "90%",
+    maxHeight: "92%",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14,
+    marginBottom: 10,
   },
   visualizerBox: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    paddingVertical: 10,
   },
   pulseRing: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 86,
+    height: 86,
+    borderRadius: 43,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -359,17 +487,18 @@ const localStyles = StyleSheet.create({
     shadowRadius: 6,
   },
   statusText: {
-    marginTop: 10,
+    marginTop: 8,
     fontSize: 14,
     fontWeight: "600",
     color: theme.ink,
+    textAlign: "center",
   },
   transcriptCard: {
     backgroundColor: theme.mint,
     borderColor: "#CDEFE5",
-    padding: 14,
-    borderRadius: 16,
-    marginVertical: 10,
+    padding: 12,
+    borderRadius: 14,
+    marginVertical: 8,
   },
   transcriptText: {
     fontSize: 15,
@@ -401,9 +530,9 @@ const localStyles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 9,
+    paddingVertical: 8,
     paddingHorizontal: 12,
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: theme.border,
     backgroundColor: theme.bg,

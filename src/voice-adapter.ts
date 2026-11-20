@@ -58,7 +58,9 @@ export function resolveVoiceIntent(
     t.includes("diagnose") ||
     t.includes("dose") ||
     t.includes("what medicine should i take") ||
-    t.includes("cure")
+    t.includes("cure") ||
+    t.includes("symptom") ||
+    t.includes("pain")
   ) {
     return {
       intent: "MEDICAL_QUERY_REFUSAL",
@@ -92,7 +94,9 @@ export function resolveVoiceIntent(
     t.includes("medicine") ||
     t.includes("pill") ||
     t.includes("prescription") ||
-    t.includes("remind")
+    t.includes("remind") ||
+    t.includes("dose") ||
+    t.includes("tablets")
   ) {
     return {
       intent: "NAVIGATE_MEDICINES",
@@ -110,7 +114,9 @@ export function resolveVoiceIntent(
     t.includes("appointment") ||
     t.includes("visit") ||
     t.includes("doctor appointment") ||
-    t.includes("when is my next")
+    t.includes("when is my next") ||
+    t.includes("schedule") ||
+    t.includes("booking status")
   ) {
     return {
       intent: "QUERY_NEXT_APPOINTMENT",
@@ -128,6 +134,7 @@ export function resolveVoiceIntent(
     t.includes("report") ||
     t.includes("record") ||
     t.includes("lab") ||
+    t.includes("blood test") ||
     t.includes("documents")
   ) {
     return {
@@ -147,7 +154,8 @@ export function resolveVoiceIntent(
     t.includes("doctor") ||
     t.includes("nurse") ||
     t.includes("physio") ||
-    t.includes("find care")
+    t.includes("find care") ||
+    t.includes("specialist")
   ) {
     return {
       intent: "NAVIGATE_BOOKING",
@@ -160,7 +168,25 @@ export function resolveVoiceIntent(
     };
   }
 
-  // 7. Fallback / Unknown
+  // 7. Conversational greetings
+  if (
+    t.startsWith("hello") ||
+    t.startsWith("hi") ||
+    t.startsWith("hey") ||
+    t.includes("who are you") ||
+    t.includes("what can you do")
+  ) {
+    return {
+      intent: "UNKNOWN_INTENT",
+      confidence: 0.85,
+      spokenResponse:
+        "Hello! I am Bloom, your healthcare assistant. You can speak to me to check appointments, medicines, or health records.",
+      requiresConfirmation: false,
+      isMedicalQuery: false,
+    };
+  }
+
+  // 8. Fallback / Unknown
   return {
     intent: "UNKNOWN_INTENT",
     confidence: 0.5,
@@ -171,12 +197,35 @@ export function resolveVoiceIntent(
   };
 }
 
-export class MockSpeechAdapter implements SpeechProviderAdapter {
+export interface LiveVoiceListenerCallbacks {
+  onListeningStart?: () => void;
+  onInterimTranscript?: (text: string) => void;
+  onFinalTranscript?: (text: string) => void;
+  onError?: (errorMessage: string) => void;
+  onEnd?: () => void;
+}
+
+export function isSpeechRecognitionSupported(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean(
+    (window as any).SpeechRecognition ||
+    (window as any).webkitSpeechRecognition
+  );
+}
+
+export function isSpeechSynthesisSupported(): boolean {
+  if (typeof window === "undefined") return false;
+  return "speechSynthesis" in window;
+}
+
+export class WebVoiceSpeechAdapter implements SpeechProviderAdapter {
+  private activeRecognition: any = null;
+
   async transcribeTestAudio(
     testPhrase: string,
     language: VoiceLanguage = "en-IN"
   ): Promise<VoiceRecognitionResult> {
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await new Promise((resolve) => setTimeout(resolve, 300));
     return {
       transcript: testPhrase,
       confidence: 0.96,
@@ -192,16 +241,168 @@ export class MockSpeechAdapter implements SpeechProviderAdapter {
     return resolveVoiceIntent(transcript, language);
   }
 
+  /**
+   * Real speech synthesis using Web Speech API (window.speechSynthesis)
+   * Plays audible sound through computer speakers in browser environments.
+   */
   async synthesizeSpeech(
-    _text: string,
-    _language: VoiceLanguage = "en-IN"
+    text: string,
+    language: VoiceLanguage = "en-IN"
   ): Promise<{ synthesized: boolean; durationMs: number }> {
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      return new Promise((resolve) => {
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = language;
+          utterance.rate = 1.0;
+          utterance.pitch = 1.0;
+
+          // Attempt to match an installed voice for the chosen language
+          const voices = window.speechSynthesis.getVoices();
+          const langCode = language.split("-")[0];
+          const matchedVoice = voices.find(
+            (v) => v.lang === language || v.lang.startsWith(langCode)
+          );
+          if (matchedVoice) {
+            utterance.voice = matchedVoice;
+          }
+
+          let settled = false;
+          const finish = () => {
+            if (!settled) {
+              settled = true;
+              resolve({ synthesized: true, durationMs: 1200 });
+            }
+          };
+
+          utterance.onend = finish;
+          utterance.onerror = finish;
+
+          // Safety timeout so UI doesn't hang if browser fails to trigger onend
+          const estimatedDuration = Math.max(2000, text.length * 80);
+          setTimeout(finish, estimatedDuration + 1000);
+
+          window.speechSynthesis.speak(utterance);
+        } catch {
+          resolve({ synthesized: false, durationMs: 1000 });
+        }
+      });
+    }
+
+    // Fallback for non-browser/test environments
+    await new Promise((resolve) => setTimeout(resolve, 300));
     return {
       synthesized: true,
-      durationMs: 1800,
+      durationMs: 1500,
     };
+  }
+
+  /**
+   * Stop any in-progress speech playback
+   */
+  stopSpeaking(): void {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  }
+
+  /**
+   * Real microphone speech recognition using Web Speech API
+   */
+  startLiveListening(
+    language: VoiceLanguage = "en-IN",
+    callbacks: LiveVoiceListenerCallbacks
+  ): () => void {
+    if (typeof window === "undefined") {
+      callbacks.onError?.("Speech recognition not supported in this environment");
+      return () => {};
+    }
+
+    const SpeechRec =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRec) {
+      callbacks.onError?.(
+        "Web Speech API is not supported in this browser. Please use Chrome or Edge."
+      );
+      return () => {};
+    }
+
+    this.stopLiveListening();
+
+    try {
+      const recognition = new SpeechRec();
+      this.activeRecognition = recognition;
+      recognition.lang = language;
+      recognition.interimResults = true;
+      recognition.continuous = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        callbacks.onListeningStart?.();
+      };
+
+      recognition.onresult = (event: any) => {
+        let interim = "";
+        let final = "";
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            final += item[0].transcript;
+          } else {
+            interim += item[0].transcript;
+          }
+        }
+
+        if (final) {
+          callbacks.onFinalTranscript?.(final.trim());
+        } else if (interim) {
+          callbacks.onInterimTranscript?.(interim.trim());
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        let message = "Speech recognition error.";
+        if (event.error === "not-allowed") {
+          message = "Microphone access blocked. Please allow mic permissions in your browser.";
+        } else if (event.error === "no-speech") {
+          message = "No speech detected. Please try speaking again.";
+        }
+        callbacks.onError?.(message);
+      };
+
+      recognition.onend = () => {
+        this.activeRecognition = null;
+        callbacks.onEnd?.();
+      };
+
+      recognition.start();
+
+      return () => {
+        this.stopLiveListening();
+      };
+    } catch (err: any) {
+      callbacks.onError?.(err?.message || "Could not start speech recognition");
+      return () => {};
+    }
+  }
+
+  /**
+   * Stop any active microphone listening session
+   */
+  stopLiveListening(): void {
+    if (this.activeRecognition) {
+      try {
+        this.activeRecognition.abort();
+      } catch {
+        // ignore
+      }
+      this.activeRecognition = null;
+    }
   }
 }
 
-export const speechAdapter = new MockSpeechAdapter();
+export const speechAdapter = new WebVoiceSpeechAdapter();
