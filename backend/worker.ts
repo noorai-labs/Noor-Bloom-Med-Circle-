@@ -729,8 +729,55 @@ async function route(
       }
     }
     if (action.type === "reschedule") {
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
       const visit = next.visits.find((v) => v.id === action.visitId);
-      if (visit) {
+      if (currentVisit && visit) {
+        const otherActiveOld = await env.DB.prepare(`
+          SELECT care_spaces.id as space_id, json_extract(value, '$.id') as visit_id, json_extract(value, '$.status') as status
+          FROM care_spaces, json_each(care_spaces.state, '$.visits')
+          WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+            AND json_extract(value, '$.providerId') = ?
+            AND json_extract(value, '$.date') = ?
+            AND json_extract(value, '$.time') = ?
+            AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+          LIMIT 1
+        `)
+          .bind(
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          )
+          .first<{ space_id: string; visit_id: string; status: string }>();
+
+        if (otherActiveOld) {
+          statements.push(
+            env.DB.prepare(
+              "UPDATE appointment_slots SET space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
+            ).bind(
+              otherActiveOld.space_id,
+              otherActiveOld.visit_id,
+              otherActiveOld.status,
+              currentVisit.providerId,
+              currentVisit.date,
+              currentVisit.time,
+            ),
+          );
+        } else {
+          statements.push(
+            env.DB.prepare(
+              "UPDATE appointment_slots SET status='Cancelled', updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
+            ).bind(
+              currentVisit.providerId,
+              currentVisit.date,
+              currentVisit.time,
+            ),
+          );
+        }
+
         statements.push(
           env.DB.prepare(
             "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) SELECT ?,?,?,?,?,?,? WHERE changes() > 0 ON CONFLICT(id) DO UPDATE SET date=excluded.date, time=excluded.time, status=excluded.status, updated_at=CURRENT_TIMESTAMP WHERE changes() > 0",
@@ -776,20 +823,26 @@ async function route(
         if (otherActive) {
           statements.push(
             env.DB.prepare(
-              "UPDATE appointment_slots SET space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+              "UPDATE appointment_slots SET space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
             ).bind(
               otherActive.space_id,
               otherActive.visit_id,
               otherActive.status,
-              space,
-              action.visitId,
+              currentVisit.providerId,
+              currentVisit.date,
+              currentVisit.time,
             ),
           );
         } else {
           statements.push(
             env.DB.prepare(
-              "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
-            ).bind(action.status, space, action.visitId),
+              "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
+            ).bind(
+              action.status,
+              currentVisit.providerId,
+              currentVisit.date,
+              currentVisit.time,
+            ),
           );
         }
       } else {
