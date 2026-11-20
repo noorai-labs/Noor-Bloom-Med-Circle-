@@ -776,8 +776,9 @@ async function route(
         if (otherActive) {
           statements.push(
             env.DB.prepare(
-              "UPDATE appointment_slots SET space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+              "UPDATE appointment_slots SET id=?, space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
             ).bind(
+              `slot_${otherActive.space_id}_${otherActive.visit_id}`,
               otherActive.space_id,
               otherActive.visit_id,
               otherActive.status,
