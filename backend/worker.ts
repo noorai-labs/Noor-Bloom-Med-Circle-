@@ -556,6 +556,15 @@ async function route(
         "Care data changed on another device. Refresh and try again.",
       );
     if (action.type === "book") {
+      if (
+        !action.visit ||
+        typeof action.visit !== "object" ||
+        typeof action.visit.providerId !== "string" ||
+        typeof action.visit.date !== "string" ||
+        typeof action.visit.time !== "string"
+      ) {
+        throw new HttpError(400, "Invalid booking request.");
+      }
       const existingSlot = await env.DB.prepare(
         "SELECT id FROM appointment_slots WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')",
       )
@@ -569,6 +578,13 @@ async function route(
       }
     }
     if (action.type === "reschedule") {
+      if (
+        typeof action.visitId !== "string" ||
+        typeof action.date !== "string" ||
+        typeof action.time !== "string"
+      ) {
+        throw new HttpError(400, "Invalid reschedule request.");
+      }
       const currentVisit = snapshot.state.visits.find(
         (v) => v.id === action.visitId,
       );
@@ -666,7 +682,7 @@ async function route(
       if (newVisit) {
         statements.push(
           env.DB.prepare(
-            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) SELECT ?,?,?,?,?,?,? WHERE changes() > 0",
           ).bind(
             `slot_${space}_${newVisit.id}`,
             newVisit.providerId,
@@ -684,7 +700,7 @@ async function route(
       if (visit) {
         statements.push(
           env.DB.prepare(
-            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET date=excluded.date, time=excluded.time, status=excluded.status, updated_at=CURRENT_TIMESTAMP",
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) SELECT ?,?,?,?,?,?,? WHERE changes() > 0 ON CONFLICT(id) DO UPDATE SET date=excluded.date, time=excluded.time, status=excluded.status, updated_at=CURRENT_TIMESTAMP WHERE changes() > 0",
           ).bind(
             `slot_${space}_${action.visitId}`,
             visit.providerId,
@@ -700,7 +716,7 @@ async function route(
     if (action.type === "status") {
       statements.push(
         env.DB.prepare(
-          "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=?",
+          "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
         ).bind(action.status, space, action.visitId),
       );
     }

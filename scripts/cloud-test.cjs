@@ -608,6 +608,45 @@ async function main() {
   } else {
     revisionB = freedReschedule.data.revision;
   }
+
+  // 8. Negative test: Malformed booking payload returns 400 validation error
+  const malformedBooking = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: { type: "book" },
+    operationId: randomUUID(),
+  });
+  assert.equal(malformedBooking.status, 400);
+  assert.equal(malformedBooking.data.error, "Invalid booking request.");
+
+  // 9. Negative test: Stale revision rejects with 409 without mutating appointment_slots
+  const slotCountBeforeStale = (
+    await db.prepare("SELECT COUNT(*) as cnt FROM appointment_slots").first()
+  ).cnt;
+  const staleBooking = await request("user_patient", endpoint, "POST", {
+    revision: revision - 1,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "10:00 AM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address",
+        reason: "Stale test",
+      },
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(staleBooking.status, 409);
+  const slotCountAfterStale = (
+    await db.prepare("SELECT COUNT(*) as cnt FROM appointment_slots").first()
+  ).cnt;
+  assert.equal(
+    slotCountAfterStale,
+    slotCountBeforeStale,
+    "Stale revision must not insert a reservation into appointment_slots",
+  );
   await mutate("user_patient", {
     type: "dose",
     medicineId: state.medicines[0].id,
