@@ -1,7 +1,8 @@
 /**
- * Voice Assistant Modal Component for BLOOM MED
+ * Multilingual Voice Assistant Modal Component for BLOOM MED
  * Part of Week 2 deliverable: feature/roshan/voice-help-prototype
- * Features real-time microphone listening (STT) and voice speech synthesis (TTS)
+ * Features real-time multilingual microphone listening (STT), voice synthesis (TTS),
+ * and automatic tab navigation.
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -58,9 +59,11 @@ export function VoiceModal({
   );
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [isLiveListening, setIsLiveListening] = useState<boolean>(false);
+  const [autoNavigating, setAutoNavigating] = useState<boolean>(false);
 
   const [pulseAnim] = useState(() => new Animated.Value(1));
   const cancelLiveListeningRef = useRef<(() => void) | null>(null);
+  const autoNavTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (status === "listening" || isLiveListening) {
@@ -94,9 +97,14 @@ export function VoiceModal({
       cancelLiveListeningRef.current();
       cancelLiveListeningRef.current = null;
     }
+    if (autoNavTimerRef.current) {
+      clearTimeout(autoNavTimerRef.current);
+      autoNavTimerRef.current = null;
+    }
     speechAdapter.stopLiveListening();
     speechAdapter.stopSpeaking();
     setIsLiveListening(false);
+    setAutoNavigating(false);
     setStatus("idle");
   }
 
@@ -110,6 +118,12 @@ export function VoiceModal({
     setTranscript("");
     setResolution(null);
     setErrorMsg("");
+  }
+
+  function handleNavigate(route: string) {
+    stopAll();
+    onClose();
+    router.push(route as any);
   }
 
   async function handleSpokenTranscript(finalText: string) {
@@ -127,6 +141,15 @@ export function VoiceModal({
       setResolution(intentRes);
 
       setStatus("speaking");
+
+      // Auto-navigation: if a specific route is requested and it's not a medical refusal or emergency confirmation
+      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
+        setAutoNavigating(true);
+        autoNavTimerRef.current = setTimeout(() => {
+          handleNavigate(intentRes.targetRoute!);
+        }, 1500);
+      }
+
       await speechAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
@@ -134,7 +157,7 @@ export function VoiceModal({
       setStatus("idle");
     } catch {
       setStatus("error");
-      setErrorMsg("Error generating speech response.");
+      setErrorMsg("Error generating voice response.");
     }
   }
 
@@ -149,8 +172,13 @@ export function VoiceModal({
     }
 
     if (!isSpeechRecognitionSupported()) {
-      // Fallback if browser doesn't have webkitSpeechRecognition
-      processPresetPhrase("Show my medicines");
+      const fallbackPhrase =
+        selectedLanguage === "hi-IN"
+          ? "मेरी दवाइयाँ दिखाओ"
+          : selectedLanguage === "kn-IN"
+          ? "ನನ್ನ ಮಾತ್ರೆಗಳು ತೋರಿಸಿ"
+          : "Show my medicines";
+      processPresetPhrase(fallbackPhrase);
       return;
     }
 
@@ -197,6 +225,14 @@ export function VoiceModal({
       setResolution(intentRes);
 
       setStatus("speaking");
+
+      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
+        setAutoNavigating(true);
+        autoNavTimerRef.current = setTimeout(() => {
+          handleNavigate(intentRes.targetRoute!);
+        }, 1600);
+      }
+
       await speechAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
@@ -206,12 +242,6 @@ export function VoiceModal({
       setStatus("error");
       setErrorMsg("Could not synthesize speech.");
     }
-  }
-
-  function handleNavigate(route: string) {
-    stopAll();
-    onClose();
-    router.push(route as any);
   }
 
   function handleMicPress() {
@@ -226,6 +256,10 @@ export function VoiceModal({
     }
     startMicrophoneListening();
   }
+
+  // Current sample phrases in the selected language
+  const currentSamplePhrases =
+    MOCK_TEST_PHRASES[selectedLanguage] || MOCK_TEST_PHRASES["en-IN"];
 
   return (
     <Modal
@@ -243,7 +277,7 @@ export function VoiceModal({
           <View style={localStyles.header}>
             <View style={globalStyles.row}>
               <Icon name="mic" color={theme.green} size={24} />
-              <Title small>Voice Assistant (Live Audio)</Title>
+              <Title small>Bloom Voice Assistant</Title>
             </View>
             <Touch
               onPress={() => {
@@ -256,9 +290,9 @@ export function VoiceModal({
             </Touch>
           </View>
 
-          {/* Language Selector */}
+          {/* Multilingual Language Switcher */}
           <View style={{ marginBottom: 12 }}>
-            <Body muted>Select language:</Body>
+            <Body muted>Select conversation language:</Body>
             <View
               style={[
                 globalStyles.row,
@@ -323,19 +357,52 @@ export function VoiceModal({
             </Animated.View>
 
             <Text style={localStyles.statusText}>
-              {status === "idle" && "🎙️ Tap the mic to speak to Bloom"}
+              {status === "idle" &&
+                (selectedLanguage === "hi-IN"
+                  ? "🎙️ बात करने के लिए माइक दबाएँ"
+                  : selectedLanguage === "kn-IN"
+                  ? "🎙️ ಮಾತನಾಡಲು ಮೈಕ್ ಒತ್ತಿ"
+                  : "🎙️ Tap the mic to speak to Bloom")}
               {(status === "listening" || isLiveListening) &&
-                "Listening to your microphone... (Speak now)"}
-              {status === "processing" && "Processing what you said..."}
-              {status === "speaking" && "🔊 Bloom is speaking aloud..."}
+                (selectedLanguage === "hi-IN"
+                  ? "सुन रही हूँ... अपनी बात कहें"
+                  : selectedLanguage === "kn-IN"
+                  ? "ಆಲಿಸುತ್ತಿದೆ... ಮಾತನಾಡಿ"
+                  : "Listening to your microphone... (Speak now)")}
+              {status === "processing" && "Processing..."}
+              {status === "speaking" &&
+                (selectedLanguage === "hi-IN"
+                  ? "🔊 ब्लूम बोल रही है..."
+                  : selectedLanguage === "kn-IN"
+                  ? "🔊 ಬ್ಲೂಮ್ ಮಾತನಾಡುತ್ತಿದೆ..."
+                  : "🔊 Bloom is speaking aloud...")}
               {status === "error" && errorMsg}
             </Text>
+
+            {autoNavigating && (
+              <View style={localStyles.autoNavBadge}>
+                <Icon name="arrow-forward-circle" color={theme.green} size={16} />
+                <Text style={localStyles.autoNavText}>
+                  {selectedLanguage === "hi-IN"
+                    ? "सीधे खोला जा रहा है..."
+                    : selectedLanguage === "kn-IN"
+                    ? "ನೇರವಾಗಿ ತೆರೆಯಲಾಗುತ್ತಿದೆ..."
+                    : "Opening tab directly..."}
+                </Text>
+              </View>
+            )}
           </View>
 
-          {/* Real-time Visible Transcript & Spoken Response Card */}
+          {/* Transcript & Response Display */}
           {transcript !== "" && (
             <Card style={localStyles.transcriptCard}>
-              <Body muted>You said:</Body>
+              <Body muted>
+                {selectedLanguage === "hi-IN"
+                  ? "आपने कहा:"
+                  : selectedLanguage === "kn-IN"
+                  ? "ನೀವು ಹೇಳಿದ್ದು:"
+                  : "You said:"}
+              </Body>
               <Text style={localStyles.transcriptText}>
                 &ldquo;{transcript}&rdquo;
               </Text>
@@ -373,11 +440,17 @@ export function VoiceModal({
             </Card>
           )}
 
-          {/* Quick Simulation Options */}
-          <View style={{ marginTop: 8 }}>
-            <Body muted>Or try a sample query:</Body>
+          {/* Quick Queries in Current Language */}
+          <View style={{ marginTop: 6 }}>
+            <Body muted>
+              {selectedLanguage === "hi-IN"
+                ? "या कोई उदाहरण चुनें:"
+                : selectedLanguage === "kn-IN"
+                ? "ಅಥವಾ ಉದಾಹರಣೆ ಕ್ಲಿಕ್ ಮಾಡಿ:"
+                : "Or tap a sample query:"}
+            </Body>
             <View style={{ gap: 6, marginTop: 6 }}>
-              {MOCK_TEST_PHRASES.slice(0, 3).map((p) => (
+              {currentSamplePhrases.slice(0, 3).map((p) => (
                 <Touch
                   key={p}
                   style={localStyles.testPhraseButton}
@@ -392,27 +465,6 @@ export function VoiceModal({
                   <Text style={localStyles.testPhraseText}>{p}</Text>
                 </Touch>
               ))}
-              <Touch
-                style={[
-                  localStyles.testPhraseButton,
-                  { borderColor: theme.red },
-                ]}
-                onPress={() =>
-                  processPresetPhrase("What medicine should I take for headache?")
-                }
-                label="Safety Guardrail Test"
-              >
-                <Icon
-                  name="alert-circle-outline"
-                  size={18}
-                  color={theme.red}
-                />
-                <Text
-                  style={[localStyles.testPhraseText, { color: theme.red }]}
-                >
-                  &ldquo;What medicine for headache?&rdquo; (Test Safety)
-                </Text>
-              </Touch>
             </View>
           </View>
 
@@ -460,17 +512,17 @@ const localStyles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 8,
   },
   visualizerBox: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   pulseRing: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
+    width: 84,
+    height: 84,
+    borderRadius: 42,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -492,6 +544,21 @@ const localStyles = StyleSheet.create({
     fontWeight: "600",
     color: theme.ink,
     textAlign: "center",
+  },
+  autoNavBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: theme.mint,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    marginTop: 6,
+  },
+  autoNavText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.green,
   },
   transcriptCard: {
     backgroundColor: theme.mint,
