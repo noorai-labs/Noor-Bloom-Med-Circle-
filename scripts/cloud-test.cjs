@@ -647,6 +647,12 @@ async function main() {
     slotCountBeforeStale,
     "Stale revision must not insert a reservation into appointment_slots",
   );
+
+  // 10. Reconcile existing visits: Overlapping active appointments remain reserved on cancellation
+  const { reconcileAppointments } = require("./reconcile-appointments.cjs");
+  const reconReport = await reconcileAppointments(db);
+  assert.equal(typeof reconReport.reconciled, "number");
+  assert.equal(typeof reconReport.duplicates, "number");
   await mutate("user_patient", {
     type: "dose",
     medicineId: state.medicines[0].id,

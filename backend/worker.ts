@@ -565,10 +565,25 @@ async function route(
       ) {
         throw new HttpError(400, "Invalid booking request.");
       }
-      const existingSlot = await env.DB.prepare(
-        "SELECT id FROM appointment_slots WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')",
-      )
-        .bind(action.visit.providerId, action.visit.date, action.visit.time)
+      const existingSlot = await env.DB.prepare(`
+        SELECT 1 FROM appointment_slots 
+        WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')
+        UNION ALL
+        SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
+        WHERE json_extract(value, '$.providerId') = ?
+          AND json_extract(value, '$.date') = ?
+          AND json_extract(value, '$.time') = ?
+          AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+        LIMIT 1
+      `)
+        .bind(
+          action.visit.providerId,
+          action.visit.date,
+          action.visit.time,
+          action.visit.providerId,
+          action.visit.date,
+          action.visit.time,
+        )
         .first();
       if (existingSlot) {
         throw new HttpError(
@@ -589,10 +604,28 @@ async function route(
         (v) => v.id === action.visitId,
       );
       if (currentVisit) {
-        const targetSlot = await env.DB.prepare(
-          "SELECT id FROM appointment_slots WHERE provider_id=? AND date=? AND time=? AND visit_id!=? AND status IN ('Requested', 'Confirmed', 'In Progress')",
-        )
-          .bind(currentVisit.providerId, action.date, action.time, action.visitId)
+        const targetSlot = await env.DB.prepare(`
+          SELECT 1 FROM appointment_slots 
+          WHERE provider_id=? AND date=? AND time=? AND visit_id!=? AND status IN ('Requested', 'Confirmed', 'In Progress')
+          UNION ALL
+          SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
+          WHERE json_extract(value, '$.providerId') = ?
+            AND json_extract(value, '$.date') = ?
+            AND json_extract(value, '$.time') = ?
+            AND json_extract(value, '$.id') != ?
+            AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+          LIMIT 1
+        `)
+          .bind(
+            currentVisit.providerId,
+            action.date,
+            action.time,
+            action.visitId,
+            currentVisit.providerId,
+            action.date,
+            action.time,
+            action.visitId,
+          )
           .first();
         if (targetSlot) {
           throw new HttpError(409, "That slot is already booked.");
@@ -713,7 +746,60 @@ async function route(
         );
       }
     }
-    if (action.type === "status") {
+    if (
+      action.type === "status" &&
+      ["Cancelled", "Completed"].includes(action.status)
+    ) {
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
+      if (currentVisit) {
+        const otherActive = await env.DB.prepare(`
+          SELECT care_spaces.id as space_id, json_extract(value, '$.id') as visit_id, json_extract(value, '$.status') as status
+          FROM care_spaces, json_each(care_spaces.state, '$.visits')
+          WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+            AND json_extract(value, '$.providerId') = ?
+            AND json_extract(value, '$.date') = ?
+            AND json_extract(value, '$.time') = ?
+            AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+          LIMIT 1
+        `)
+          .bind(
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          )
+          .first<{ space_id: string; visit_id: string; status: string }>();
+
+        if (otherActive) {
+          statements.push(
+            env.DB.prepare(
+              "UPDATE appointment_slots SET space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+            ).bind(
+              otherActive.space_id,
+              otherActive.visit_id,
+              otherActive.status,
+              space,
+              action.visitId,
+            ),
+          );
+        } else {
+          statements.push(
+            env.DB.prepare(
+              "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+            ).bind(action.status, space, action.visitId),
+          );
+        }
+      } else {
+        statements.push(
+          env.DB.prepare(
+            "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+          ).bind(action.status, space, action.visitId),
+        );
+      }
+    } else if (action.type === "status") {
       statements.push(
         env.DB.prepare(
           "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
