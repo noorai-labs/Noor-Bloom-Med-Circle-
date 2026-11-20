@@ -146,14 +146,14 @@ export async function providerRoute(
       details.languages.every((l) => typeof l === "string") &&
       details.languages.length
         ? (details.languages as string[]).map((l) => l.trim()).filter(Boolean)
-        : ["English"];
+        : [];
 
     const modes =
       Array.isArray(details.modes) &&
       details.modes.every((m) => typeof m === "string") &&
       details.modes.length
         ? (details.modes as string[]).map((m) => m.trim()).filter(Boolean)
-        : ["in-person", "video"];
+        : [];
 
     const provider: PublicProvider = {
       id: row.user_id,
