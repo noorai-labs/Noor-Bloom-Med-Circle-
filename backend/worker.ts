@@ -734,49 +734,81 @@ async function route(
       );
       const visit = next.visits.find((v) => v.id === action.visitId);
       if (currentVisit && visit) {
-        const otherActiveOld = await env.DB.prepare(`
-          SELECT care_spaces.id as space_id, json_extract(value, '$.id') as visit_id, json_extract(value, '$.status') as status
-          FROM care_spaces, json_each(care_spaces.state, '$.visits')
-          WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
-            AND json_extract(value, '$.providerId') = ?
-            AND json_extract(value, '$.date') = ?
-            AND json_extract(value, '$.time') = ?
-            AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
-          LIMIT 1
-        `)
-          .bind(
+        statements.push(
+          env.DB.prepare(
+            `
+            UPDATE appointment_slots
+            SET id = COALESCE((
+                  SELECT 'slot_' || care_spaces.id || '_' || json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), id),
+                space_id = COALESCE((
+                  SELECT care_spaces.id
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), space_id),
+                visit_id = COALESCE((
+                  SELECT json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), visit_id),
+                status = COALESCE((
+                  SELECT json_extract(value, '$.status')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), 'Cancelled'),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE ((space_id=? AND visit_id=?) OR (provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress'))) AND changes() > 0
+          `,
+          ).bind(
             space,
             action.visitId,
             currentVisit.providerId,
             currentVisit.date,
             currentVisit.time,
-          )
-          .first<{ space_id: string; visit_id: string; status: string }>();
-
-        if (otherActiveOld) {
-          statements.push(
-            env.DB.prepare(
-              "UPDATE appointment_slots SET space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
-            ).bind(
-              otherActiveOld.space_id,
-              otherActiveOld.visit_id,
-              otherActiveOld.status,
-              currentVisit.providerId,
-              currentVisit.date,
-              currentVisit.time,
-            ),
-          );
-        } else {
-          statements.push(
-            env.DB.prepare(
-              "UPDATE appointment_slots SET status='Cancelled', updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
-            ).bind(
-              currentVisit.providerId,
-              currentVisit.date,
-              currentVisit.time,
-            ),
-          );
-        }
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          ),
+        );
 
         statements.push(
           env.DB.prepare(
@@ -801,50 +833,82 @@ async function route(
         (v) => v.id === action.visitId,
       );
       if (currentVisit) {
-        const otherActive = await env.DB.prepare(`
-          SELECT care_spaces.id as space_id, json_extract(value, '$.id') as visit_id, json_extract(value, '$.status') as status
-          FROM care_spaces, json_each(care_spaces.state, '$.visits')
-          WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
-            AND json_extract(value, '$.providerId') = ?
-            AND json_extract(value, '$.date') = ?
-            AND json_extract(value, '$.time') = ?
-            AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
-          LIMIT 1
-        `)
-          .bind(
+        statements.push(
+          env.DB.prepare(
+            `
+            UPDATE appointment_slots
+            SET id = COALESCE((
+                  SELECT 'slot_' || care_spaces.id || '_' || json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), id),
+                space_id = COALESCE((
+                  SELECT care_spaces.id
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), space_id),
+                visit_id = COALESCE((
+                  SELECT json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), visit_id),
+                status = COALESCE((
+                  SELECT json_extract(value, '$.status')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE ((space_id=? AND visit_id=?) OR (provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress'))) AND changes() > 0
+          `,
+          ).bind(
             space,
             action.visitId,
             currentVisit.providerId,
             currentVisit.date,
             currentVisit.time,
-          )
-          .first<{ space_id: string; visit_id: string; status: string }>();
-
-        if (otherActive) {
-          statements.push(
-            env.DB.prepare(
-              "UPDATE appointment_slots SET space_id=?, visit_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
-            ).bind(
-              otherActive.space_id,
-              otherActive.visit_id,
-              otherActive.status,
-              currentVisit.providerId,
-              currentVisit.date,
-              currentVisit.time,
-            ),
-          );
-        } else {
-          statements.push(
-            env.DB.prepare(
-              "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE provider_id=? AND date=? AND time=? AND changes() > 0",
-            ).bind(
-              action.status,
-              currentVisit.providerId,
-              currentVisit.date,
-              currentVisit.time,
-            ),
-          );
-        }
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            action.status,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          ),
+        );
       } else {
         statements.push(
           env.DB.prepare(
