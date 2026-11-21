@@ -10,6 +10,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { digestStringAsync, CryptoDigestAlgorithm } from "expo-crypto";
 import { router } from "expo-router";
+import { isRunningInExpoGo } from "expo";
 import Constants from "expo-constants";
 import { reminderDeviceId } from "./cloud-reminders";
 import { useClinic } from "./store";
@@ -241,8 +242,10 @@ export function MedicineReminderProvider({
     const listener = AppState.addEventListener("change", (value) => {
       if (value === "active") setRefresh((v) => v + 1);
     });
+    const inExpoGo =
+      isRunningInExpoGo() || Constants.executionEnvironment === "storeClient";
     const tokenListener =
-      Platform.OS !== "web" && Constants.executionEnvironment !== "storeClient"
+      Platform.OS !== "web" && !inExpoGo
         ? Notifications.addPushTokenListener(() => {
             pushToken.current = "";
             setRefresh((value) => value + 1);
@@ -303,7 +306,7 @@ export function MedicineReminderProvider({
       setSaved({ ...current, prefs: next, revision });
   }
   async function getPushToken() {
-    if (Constants.executionEnvironment === "storeClient")
+    if (isRunningInExpoGo() || Constants.executionEnvironment === "storeClient")
       throw new Error(
         "Server push requires an installed BLOOM MED development or APK build. Expo Go supports local reminders.",
       );

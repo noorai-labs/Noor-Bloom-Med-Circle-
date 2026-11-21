@@ -139,6 +139,9 @@ export function ProfessionalScreen() {
         <Empty
           title="Profile not found"
           body="Choose a professional from Find care."
+          icon="person-outline"
+          action="Find care"
+          onPress={() => router.replace("/discover")}
         />
       </Screen>
     );
@@ -566,10 +569,15 @@ export function AppointmentsScreen() {
 function GeneralAppointmentsScreen() {
   const { state } = useClinic();
   const [filter, setFilter] = useState("Upcoming");
-  const list = visibleVisits(state).filter(
+  const allVisits = visibleVisits(state);
+  const list = allVisits.filter(
     (v) =>
       filter === "All" ||
       (filter === "Upcoming" ? !terminal(v) : v.status === filter),
+  );
+  const hasHistory = allVisits.length > 0;
+  const isPatientOrFamily = ["Patient", "Family"].includes(
+    state.session?.role || "",
   );
   return (
     <Screen
@@ -590,12 +598,38 @@ function GeneralAppointmentsScreen() {
       ))}
       {!list.length && (
         <Empty
-          title="Nothing here yet"
-          body="Appointments matching this filter will appear here."
+          title={
+            hasHistory ? `No ${filter.toLowerCase()} visits` : "No visits yet"
+          }
+          body={
+            hasHistory
+              ? `You don’t have any ${filter.toLowerCase()} appointments right now.`
+              : isPatientOrFamily
+                ? "Book your first appointment with a verified doctor or home nurse."
+                : "No appointments scheduled in your queue yet."
+          }
           icon="calendar-outline"
+          action={!hasHistory && isPatientOrFamily ? "Find a doctor" : undefined}
+          onPress={
+            !hasHistory && isPatientOrFamily
+              ? () =>
+                  router.push({
+                    pathname: "/discover",
+                    params: { kind: "doctor" },
+                  })
+              : undefined
+          }
+          secondaryAction={
+            !hasHistory && isPatientOrFamily ? "Explore all care" : undefined
+          }
+          onSecondaryPress={
+            !hasHistory && isPatientOrFamily
+              ? () => router.push("/discover")
+              : undefined
+          }
         />
       )}
-      {["Patient", "Family"].includes(state.session?.role || "") && (
+      {(list.length > 0 || hasHistory) && ["Patient", "Family"].includes(state.session?.role || "") && (
         <Button
           title="Book another care moment"
           icon="add"
@@ -628,6 +662,9 @@ export function VisitScreen() {
         <Empty
           title="Visit unavailable"
           body="Choose a visit assigned to your current care role."
+          icon="alert-circle-outline"
+          action="Back to appointments"
+          onPress={() => router.replace("/(tabs)/appointments")}
         />
       </Screen>
     );
