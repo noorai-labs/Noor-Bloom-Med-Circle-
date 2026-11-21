@@ -1,8 +1,8 @@
 /**
  * Multilingual Voice Assistant Modal Component for BLOOM MED
- * Part of Week 2 deliverable: feature/roshan/voice-help-prototype
- * Features real-time multilingual microphone listening (STT), voice synthesis (TTS),
- * and automatic tab navigation.
+ * Powered exclusively by:
+ * ⚡ Deepgram Nova-3 (STT) + Cartesia Sonic-3.6 (TTS)
+ * Features Voice Activity Detection (VAD) / Silence Auto-Stop
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -28,9 +28,10 @@ import {
   Touch,
 } from "./components";
 import {
-  isSpeechRecognitionSupported,
+  deepgramCartesiaAdapter,
+} from "./deepgram-cartesia-adapter";
+import {
   MOCK_TEST_PHRASES,
-  speechAdapter,
   SUPPORTED_VOICE_LANGUAGES,
 } from "./voice-adapter";
 import {
@@ -62,8 +63,21 @@ export function VoiceModal({
   const [autoNavigating, setAutoNavigating] = useState<boolean>(false);
 
   const [pulseAnim] = useState(() => new Animated.Value(1));
-  const cancelLiveListeningRef = useRef<(() => void) | null>(null);
+  const isStoppingRef = useRef<boolean>(false);
   const autoNavTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function stopAll() {
+    isStoppingRef.current = false;
+    if (autoNavTimerRef.current) {
+      clearTimeout(autoNavTimerRef.current);
+      autoNavTimerRef.current = null;
+    }
+    deepgramCartesiaAdapter.stopSpeaking();
+    deepgramCartesiaAdapter.stopMicrophoneCapture().catch(() => {});
+    setIsLiveListening(false);
+    setAutoNavigating(false);
+    setStatus("idle");
+  }
 
   useEffect(() => {
     if (status === "listening" || isLiveListening) {
@@ -92,22 +106,6 @@ export function VoiceModal({
     };
   }, []);
 
-  function stopAll() {
-    if (cancelLiveListeningRef.current) {
-      cancelLiveListeningRef.current();
-      cancelLiveListeningRef.current = null;
-    }
-    if (autoNavTimerRef.current) {
-      clearTimeout(autoNavTimerRef.current);
-      autoNavTimerRef.current = null;
-    }
-    speechAdapter.stopLiveListening();
-    speechAdapter.stopSpeaking();
-    setIsLiveListening(false);
-    setAutoNavigating(false);
-    setStatus("idle");
-  }
-
   function handleStop() {
     stopAll();
     setErrorMsg("");
@@ -134,7 +132,7 @@ export function VoiceModal({
     setIsLiveListening(false);
 
     try {
-      const intentRes = speechAdapter.resolveIntent(
+      const intentRes = deepgramCartesiaAdapter.resolveIntent(
         finalText,
         selectedLanguage
       );
@@ -142,7 +140,6 @@ export function VoiceModal({
 
       setStatus("speaking");
 
-      // Auto-navigation: if a specific route is requested and it's not a medical refusal or emergency confirmation
       if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
         setAutoNavigating(true);
         autoNavTimerRef.current = setTimeout(() => {
@@ -150,63 +147,75 @@ export function VoiceModal({
         }, 1500);
       }
 
-      await speechAdapter.synthesizeSpeech(
+      await deepgramCartesiaAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
       setStatus("idle");
     } catch {
       setStatus("error");
-      setErrorMsg("Error generating voice response.");
+      setErrorMsg("Error generating Cartesia voice response.");
     }
   }
 
-  function startMicrophoneListening() {
+  async function startMicrophone() {
     stopAll();
     setTranscript("");
     setResolution(null);
     setErrorMsg("");
+    setIsLiveListening(true);
+    setStatus("listening");
 
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     }
 
-    if (!isSpeechRecognitionSupported()) {
-      const fallbackPhrase =
-        selectedLanguage === "hi-IN"
-          ? "मेरी दवाइयाँ दिखाओ"
-          : selectedLanguage === "kn-IN"
-          ? "ನನ್ನ ಮಾತ್ರೆಗಳು ತೋರಿಸಿ"
-          : "Show my medicines";
-      processPresetPhrase(fallbackPhrase);
-      return;
-    }
-
-    setIsLiveListening(true);
-    setStatus("listening");
-
-    const cleanup = speechAdapter.startLiveListening(selectedLanguage, {
-      onListeningStart: () => {
-        setStatus("listening");
-        setIsLiveListening(true);
-      },
-      onInterimTranscript: (interim) => {
-        setTranscript(interim);
-      },
-      onFinalTranscript: (finalText) => {
-        handleSpokenTranscript(finalText);
-      },
-      onError: (err) => {
-        setIsLiveListening(false);
-        setStatus("error");
-        setErrorMsg(err);
-      },
-      onEnd: () => {
-        setIsLiveListening(false);
+    const started = await deepgramCartesiaAdapter.startMicrophoneCapture({
+      onSilenceAutoStop: () => {
+        // Auto-stop detected via VAD when user finishes speaking!
+        stopMicrophoneAndTranscribe();
       },
     });
 
-    cancelLiveListeningRef.current = cleanup;
+    if (!started) {
+      setIsLiveListening(false);
+      setStatus("error");
+      setErrorMsg("Could not access microphone for Deepgram. Please check mic permissions.");
+    }
+  }
+
+  async function stopMicrophoneAndTranscribe() {
+    if (isStoppingRef.current) return;
+    isStoppingRef.current = true;
+
+    setIsLiveListening(false);
+    setStatus("processing");
+
+    try {
+      const blob = await deepgramCartesiaAdapter.stopMicrophoneCapture();
+      if (!blob) {
+        setStatus("idle");
+        return;
+      }
+
+      const recognized = await deepgramCartesiaAdapter.transcribeAudioBlob(
+        blob,
+        selectedLanguage
+      );
+
+      if (!recognized) {
+        setStatus("idle");
+        setErrorMsg("Deepgram: No speech detected. Please speak clearly into the mic.");
+        return;
+      }
+
+      await handleSpokenTranscript(recognized);
+    } catch (err: any) {
+      setStatus("error");
+      setErrorMsg(err?.message || "Deepgram transcription failed.");
+    } finally {
+      isStoppingRef.current = false;
+    }
   }
 
   async function processPresetPhrase(phrase: string) {
@@ -221,7 +230,7 @@ export function VoiceModal({
     }
 
     try {
-      const intentRes = speechAdapter.resolveIntent(phrase, selectedLanguage);
+      const intentRes = deepgramCartesiaAdapter.resolveIntent(phrase, selectedLanguage);
       setResolution(intentRes);
 
       setStatus("speaking");
@@ -233,31 +242,32 @@ export function VoiceModal({
         }, 1600);
       }
 
-      await speechAdapter.synthesizeSpeech(
+      await deepgramCartesiaAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
       setStatus("idle");
     } catch {
       setStatus("error");
-      setErrorMsg("Could not synthesize speech.");
+      setErrorMsg("Could not synthesize speech with Cartesia.");
     }
   }
 
   function handleMicPress() {
     if (status === "speaking") {
-      speechAdapter.stopSpeaking();
-      setStatus("idle");
-      return;
-    }
-    if (isLiveListening || status === "listening") {
       stopAll();
       return;
     }
-    startMicrophoneListening();
+
+    if (isLiveListening || status === "listening") {
+      // User can optionally tap to stop early before VAD 1.2s timeout
+      stopMicrophoneAndTranscribe();
+      return;
+    }
+
+    startMicrophone();
   }
 
-  // Current sample phrases in the selected language
   const currentSamplePhrases =
     MOCK_TEST_PHRASES[selectedLanguage] || MOCK_TEST_PHRASES["en-IN"];
 
@@ -275,9 +285,18 @@ export function VoiceModal({
         <View style={localStyles.container}>
           {/* Header */}
           <View style={localStyles.header}>
-            <View style={globalStyles.row}>
-              <Icon name="mic" color={theme.green} size={24} />
-              <Title small>Bloom Voice Assistant</Title>
+            <View>
+              <View style={globalStyles.row}>
+                <Icon name="mic" color={theme.green} size={24} />
+                <Title small>Bloom Voice Assistant</Title>
+              </View>
+              <View style={localStyles.engineBadgeRow}>
+                <View style={localStyles.engineBadge}>
+                  <Text style={localStyles.engineBadgeText}>
+                    ⚡ Deepgram Nova-3 + Cartesia Sonic
+                  </Text>
+                </View>
+              </View>
             </View>
             <Touch
               onPress={() => {
@@ -296,7 +315,7 @@ export function VoiceModal({
             <View
               style={[
                 globalStyles.row,
-                { flexWrap: "wrap", gap: 8, marginTop: 6 },
+                { flexWrap: "wrap", gap: 8, marginTop: 4 },
               ]}
             >
               {SUPPORTED_VOICE_LANGUAGES.map((lang) => (
@@ -360,23 +379,23 @@ export function VoiceModal({
             <Text style={localStyles.statusText}>
               {status === "idle" &&
                 (selectedLanguage === "hi-IN"
-                  ? "🎙️ बात करने के लिए माइक दबाएँ"
+                  ? "🎙️ माइक दबाएँ और बोलें (समाप्त होने पर अपने आप पहचान लेगा)"
                   : selectedLanguage === "kn-IN"
-                  ? "🎙️ ಮಾತನಾಡಲು ಮೈಕ್ ಒತ್ತಿ"
-                  : "🎙️ Tap the mic to speak to Bloom")}
+                  ? "🎙️ ಮೈಕ್ ಒತ್ತಿ ಮಾತನಾಡಿ (ಮುಗಿದ ನಂತರ ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಕಳುಹಿಸುತ್ತದೆ)"
+                  : "🎙️ Tap mic & speak (auto-detects when you finish)")}
               {(status === "listening" || isLiveListening) &&
                 (selectedLanguage === "hi-IN"
-                  ? "सुन रही हूँ... अपनी बात कहें"
+                  ? "सुन रही हूँ... अपनी बात कहें (रुकने पर अपने आप भेजेगा)"
                   : selectedLanguage === "kn-IN"
-                  ? "ಆಲಿಸುತ್ತಿದೆ... ಮಾತನಾಡಿ"
-                  : "Listening to your microphone... (Speak now)")}
-              {status === "processing" && "Processing..."}
+                  ? "ಆಲಿಸುತ್ತಿದೆ... ಮಾತನಾಡಿ (ನಿಲ್ಲಿಸಿದ ತಕ್ಷಣ ಕಳುಹಿಸುತ್ತದೆ)"
+                  : "Listening with Deepgram... (Speak now, auto-detects pause)")}
+              {status === "processing" && "Deepgram Nova-3 transcribing audio..."}
               {status === "speaking" &&
                 (selectedLanguage === "hi-IN"
-                  ? "🔊 ब्लूम बोल रही है..."
+                  ? "🔊 Cartesia Sonic बोल रही है..."
                   : selectedLanguage === "kn-IN"
-                  ? "🔊 ಬ್ಲೂಮ್ ಮಾತನಾಡುತ್ತಿದೆ..."
-                  : "🔊 Bloom is speaking aloud...")}
+                  ? "🔊 Cartesia Sonic ಮಾತನಾಡುತ್ತಿದೆ..."
+                  : "🔊 Cartesia Sonic is speaking aloud...")}
               {status === "error" && errorMsg}
             </Text>
 
@@ -445,10 +464,10 @@ export function VoiceModal({
           <View style={{ marginTop: 6 }}>
             <Body muted>
               {selectedLanguage === "hi-IN"
-                ? "या कोई उदाहरण चुनें:"
+                ? "या कोई उदाहरण चुनें (Cartesia Voice Playback):"
                 : selectedLanguage === "kn-IN"
                 ? "ಅಥವಾ ಉದಾಹರಣೆ ಕ್ಲಿಕ್ ಮಾಡಿ:"
-                : "Or tap a sample query:"}
+                : "Or tap a sample query (Cartesia Voice Playback):"}
             </Body>
             <View style={{ gap: 6, marginTop: 6 }}>
               {currentSamplePhrases.slice(0, 3).map((p) => (
@@ -514,6 +533,25 @@ const localStyles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+  },
+  engineBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 3,
+  },
+  engineBadge: {
+    backgroundColor: "#E6F4EA",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#CEEAD6",
+  },
+  engineBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: theme.green,
+    letterSpacing: 0.2,
   },
   visualizerBox: {
     alignItems: "center",
