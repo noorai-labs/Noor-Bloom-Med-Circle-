@@ -194,18 +194,20 @@ export function VoiceModal({
 
       setStatus("speaking");
 
-      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
-        setAutoNavigating(true);
-        autoNavTimerRef.current = setTimeout(() => {
-          handleNavigate(intentRes.targetRoute!);
-        }, 1800);
-      }
-
+      // 1. Wait for Bloom to finish speaking the entire response aloud!
       await deepgramCartesiaAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
       setStatus("idle");
+
+      // 2. ONLY navigate AFTER the full speech audio has finished playing!
+      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
+        setAutoNavigating(true);
+        autoNavTimerRef.current = setTimeout(() => {
+          handleNavigate(intentRes.targetRoute!);
+        }, 1200);
+      }
     } catch {
       setStatus("error");
       setErrorMsg("Error generating voice response.");
@@ -222,6 +224,22 @@ export function VoiceModal({
 
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
+
+    // Unlock browser audio context on user gesture
+    if (typeof window !== "undefined") {
+      try {
+        const AudioCtx =
+          window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const dummyCtx = new AudioCtx();
+          if (dummyCtx.state === "suspended") {
+            dummyCtx.resume().catch(() => {});
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
 
     const started = await deepgramCartesiaAdapter.startMicrophoneCapture({
@@ -289,18 +307,20 @@ export function VoiceModal({
 
       setStatus("speaking");
 
-      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
-        setAutoNavigating(true);
-        autoNavTimerRef.current = setTimeout(() => {
-          handleNavigate(intentRes.targetRoute!);
-        }, 1800);
-      }
-
+      // 1. Wait for Bloom to finish speaking the entire response aloud!
       await deepgramCartesiaAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
       setStatus("idle");
+
+      // 2. ONLY navigate AFTER the full speech audio has finished playing!
+      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
+        setAutoNavigating(true);
+        autoNavTimerRef.current = setTimeout(() => {
+          handleNavigate(intentRes.targetRoute!);
+        }, 1200);
+      }
     } catch {
       setStatus("error");
       setErrorMsg("Could not synthesize speech.");
