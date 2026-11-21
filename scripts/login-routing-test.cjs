@@ -30,6 +30,10 @@ assert.equal(postLoginRoute(doctor, false, "Doctor"), "/(tabs)");
 assert.equal(postLoginRoute(patient, false, "Patient"), "/onboarding");
 assert.equal(postLoginRoute(patient, true, "Patient"), "/(tabs)");
 assert.equal(postLoginRoute(null, true, "Doctor"), "/sign-in");
+for (const role of ["Family", "Nurse", "Admin"]) {
+  assert.equal(postLoginRoute({ ...patient, role }, true, role), "/(tabs)");
+  assert.equal(postLoginRoute(patient, false, role), "/onboarding");
+}
 (async () => {
   let finishRead;
   const diskRead = new Promise((resolve) => {
@@ -46,6 +50,7 @@ assert.equal(postLoginRoute(null, true, "Doctor"), "/sign-in");
         },
       },
     },
+    "./clinic": { roles: ["Patient", "Family", "Doctor", "Nurse", "Admin"] },
     react: {},
   });
   const hydration = audience.getLoginAudience();
@@ -72,6 +77,7 @@ assert.equal(postLoginRoute(null, true, "Doctor"), "/sign-in");
       __esModule: true,
       default: { getItem: async () => "Doctor" },
     },
+    "./clinic": { roles: ["Patient", "Family", "Doctor", "Nurse", "Admin"] },
     react: {},
   });
   assert.equal(
@@ -79,6 +85,19 @@ assert.equal(postLoginRoute(null, true, "Doctor"), "/sign-in");
     "Doctor",
     "Doctor selection survives cold-start/callback remount",
   );
+  for (const role of ["Family", "Nurse", "Admin"]) {
+    await audience.setLoginAudience(role);
+    assert.equal(await audience.getLoginAudience(), role);
+    const restoredPortal = compile("src/login-audience.ts", {
+      "./clinic": { roles: ["Patient", "Family", "Doctor", "Nurse", "Admin"] },
+      "@react-native-async-storage/async-storage": {
+        __esModule: true,
+        default: { getItem: async () => role },
+      },
+      react: {},
+    });
+    assert.equal(await restoredPortal.getLoginAudience(), role);
+  }
   console.log(
     "Passed: Doctor entry guard, Patient onboarding, assigned Doctor routing, cold-start persistence and storage race protection.",
   );

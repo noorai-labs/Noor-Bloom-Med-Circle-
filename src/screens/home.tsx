@@ -274,10 +274,18 @@ function GeneralHomeScreen() {
                 <VisitCard visit={next} />
               ) : (
                 <Empty
-                  title="Your calendar is clear"
-                  body="Book care whenever you need it."
-                  action="Find care"
-                  onPress={() => router.push("/discover")}
+                  title="No visits scheduled yet"
+                  body="Find a verified physician or nurse and schedule your next home visit."
+                  icon="calendar-outline"
+                  action="Find a doctor"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/discover",
+                      params: { kind: "doctor" },
+                    })
+                  }
+                  secondaryAction="Explore care options"
+                  onSecondaryPress={() => router.push("/discover")}
                 />
               )}
               <Card>
@@ -414,7 +422,7 @@ function GeneralHomeScreen() {
                 button="Open my visits"
                 onPress={() => router.push("/(tabs)/appointments")}
               />
-              <View style={styles.row}>
+              <View style={[styles.row, { flexWrap: "wrap" }]}>
                 {[
                   [
                     "Upcoming",
