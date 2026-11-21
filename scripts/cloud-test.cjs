@@ -481,7 +481,7 @@ async function main() {
   const winningUser = resA.status === 200 ? "user_patient" : "user_patient_b";
   const winningEndpoint = resA.status === 200 ? endpoint : endpointB;
   const winningOp = resA.status === 200 ? competingOpA : competingOpB;
-  let winningRevision = resA.status === 200 ? revision : revisionB;
+  const winningRevision = resA.status === 200 ? revision : revisionB;
 
   const replay = await request(winningUser, winningEndpoint, "POST", {
     revision: winningRevision,
@@ -559,9 +559,6 @@ async function main() {
     "Request with new operation ID must not be treated as an idempotent replay",
   );
   revision = bookingWithCollisionOp.data.revision;
-  if (resA.status === 200) {
-    winningRevision = bookingWithCollisionOp.data.revision;
-  }
   const collisionSlot = await db
     .prepare(
       "SELECT * FROM appointment_slots WHERE provider_id='1' AND date=? AND time=?",
@@ -614,7 +611,7 @@ async function main() {
   const winningVisitId =
     successRes.data.state.visits[successRes.data.state.visits.length - 1].id;
   const cancelRes = await request(winningUser, winningEndpoint, "POST", {
-    revision: winningRevision,
+    revision: resA.status === 200 ? revision : revisionB,
     action: {
       type: "status",
       visitId: winningVisitId,
