@@ -1,8 +1,8 @@
 /**
  * Multilingual Voice Assistant Modal Component for BLOOM MED
- * Part of Week 2 deliverable: feature/roshan/voice-help-prototype
- * Features real-time multilingual microphone listening (STT), voice synthesis (TTS),
- * and automatic tab navigation.
+ * Supports Dual Engines:
+ * 1. ⚡ Deepgram (STT) + Cartesia Sonic (TTS) Cloud Engine
+ * 2. 🌐 Browser Native Web Speech Engine
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -28,6 +28,9 @@ import {
   Touch,
 } from "./components";
 import {
+  deepgramCartesiaAdapter,
+} from "./deepgram-cartesia-adapter";
+import {
   isSpeechRecognitionSupported,
   MOCK_TEST_PHRASES,
   speechAdapter,
@@ -38,6 +41,8 @@ import {
   VoiceLanguage,
   VoicePipelineStatus,
 } from "./voice-types";
+
+type VoiceEngine = "cloud" | "web";
 
 interface VoiceModalProps {
   visible: boolean;
@@ -50,6 +55,7 @@ export function VoiceModal({
   onClose,
   defaultLanguage = "en-IN",
 }: VoiceModalProps) {
+  const [engine, setEngine] = useState<VoiceEngine>("cloud");
   const [status, setStatus] = useState<VoicePipelineStatus>("idle");
   const [selectedLanguage, setSelectedLanguage] =
     useState<VoiceLanguage>(defaultLanguage);
@@ -101,6 +107,8 @@ export function VoiceModal({
       clearTimeout(autoNavTimerRef.current);
       autoNavTimerRef.current = null;
     }
+    deepgramCartesiaAdapter.stopSpeaking();
+    deepgramCartesiaAdapter.stopMicrophoneCapture().catch(() => {});
     speechAdapter.stopLiveListening();
     speechAdapter.stopSpeaking();
     setIsLiveListening(false);
@@ -134,7 +142,10 @@ export function VoiceModal({
     setIsLiveListening(false);
 
     try {
-      const intentRes = speechAdapter.resolveIntent(
+      const activeAdapter =
+        engine === "cloud" ? deepgramCartesiaAdapter : speechAdapter;
+
+      const intentRes = activeAdapter.resolveIntent(
         finalText,
         selectedLanguage
       );
@@ -142,7 +153,6 @@ export function VoiceModal({
 
       setStatus("speaking");
 
-      // Auto-navigation: if a specific route is requested and it's not a medical refusal or emergency confirmation
       if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
         setAutoNavigating(true);
         autoNavTimerRef.current = setTimeout(() => {
@@ -150,7 +160,7 @@ export function VoiceModal({
         }, 1500);
       }
 
-      await speechAdapter.synthesizeSpeech(
+      await activeAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
@@ -161,7 +171,50 @@ export function VoiceModal({
     }
   }
 
-  function startMicrophoneListening() {
+  async function startCloudMic() {
+    stopAll();
+    setTranscript("");
+    setResolution(null);
+    setErrorMsg("");
+    setIsLiveListening(true);
+    setStatus("listening");
+
+    const started = await deepgramCartesiaAdapter.startMicrophoneCapture();
+    if (!started) {
+      setIsLiveListening(false);
+      setStatus("error");
+      setErrorMsg("Could not access microphone for Deepgram.");
+    }
+  }
+
+  async function stopCloudMic() {
+    setIsLiveListening(false);
+    setStatus("processing");
+
+    const blob = await deepgramCartesiaAdapter.stopMicrophoneCapture();
+    if (!blob) {
+      setStatus("idle");
+      return;
+    }
+
+    try {
+      const recognized = await deepgramCartesiaAdapter.transcribeAudioBlob(
+        blob,
+        selectedLanguage
+      );
+      if (!recognized) {
+        setStatus("idle");
+        setErrorMsg("Deepgram: No speech detected. Please speak clearly into the mic.");
+        return;
+      }
+      await handleSpokenTranscript(recognized);
+    } catch (err: any) {
+      setStatus("error");
+      setErrorMsg(err?.message || "Deepgram transcription failed.");
+    }
+  }
+
+  function startWebMicrophoneListening() {
     stopAll();
     setTranscript("");
     setResolution(null);
@@ -221,7 +274,10 @@ export function VoiceModal({
     }
 
     try {
-      const intentRes = speechAdapter.resolveIntent(phrase, selectedLanguage);
+      const activeAdapter =
+        engine === "cloud" ? deepgramCartesiaAdapter : speechAdapter;
+
+      const intentRes = activeAdapter.resolveIntent(phrase, selectedLanguage);
       setResolution(intentRes);
 
       setStatus("speaking");
@@ -233,7 +289,7 @@ export function VoiceModal({
         }, 1600);
       }
 
-      await speechAdapter.synthesizeSpeech(
+      await activeAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
@@ -246,18 +302,26 @@ export function VoiceModal({
 
   function handleMicPress() {
     if (status === "speaking") {
-      speechAdapter.stopSpeaking();
-      setStatus("idle");
-      return;
-    }
-    if (isLiveListening || status === "listening") {
       stopAll();
       return;
     }
-    startMicrophoneListening();
+
+    if (isLiveListening || status === "listening") {
+      if (engine === "cloud") {
+        stopCloudMic();
+      } else {
+        stopAll();
+      }
+      return;
+    }
+
+    if (engine === "cloud") {
+      startCloudMic();
+    } else {
+      startWebMicrophoneListening();
+    }
   }
 
-  // Current sample phrases in the selected language
   const currentSamplePhrases =
     MOCK_TEST_PHRASES[selectedLanguage] || MOCK_TEST_PHRASES["en-IN"];
 
@@ -290,13 +354,41 @@ export function VoiceModal({
             </Touch>
           </View>
 
+          {/* Engine Selector: Deepgram + Cartesia vs Web Speech */}
+          <View style={{ marginBottom: 10 }}>
+            <Body muted>Select Voice Engine:</Body>
+            <View
+              style={[
+                globalStyles.row,
+                { flexWrap: "wrap", gap: 8, marginTop: 4 },
+              ]}
+            >
+              <Chip
+                title="⚡ Deepgram + Cartesia (Cloud AI)"
+                active={engine === "cloud"}
+                onPress={() => {
+                  stopAll();
+                  setEngine("cloud");
+                }}
+              />
+              <Chip
+                title="🌐 Web Speech (Browser)"
+                active={engine === "web"}
+                onPress={() => {
+                  stopAll();
+                  setEngine("web");
+                }}
+              />
+            </View>
+          </View>
+
           {/* Multilingual Language Switcher */}
           <View style={{ marginBottom: 12 }}>
             <Body muted>Select conversation language:</Body>
             <View
               style={[
                 globalStyles.row,
-                { flexWrap: "wrap", gap: 8, marginTop: 6 },
+                { flexWrap: "wrap", gap: 8, marginTop: 4 },
               ]}
             >
               {SUPPORTED_VOICE_LANGUAGES.map((lang) => (
@@ -359,20 +451,29 @@ export function VoiceModal({
 
             <Text style={localStyles.statusText}>
               {status === "idle" &&
-                (selectedLanguage === "hi-IN"
+                (engine === "cloud"
+                  ? "⚡ Deepgram: Tap mic, speak, then tap again to send"
+                  : selectedLanguage === "hi-IN"
                   ? "🎙️ बात करने के लिए माइक दबाएँ"
                   : selectedLanguage === "kn-IN"
                   ? "🎙️ ಮಾತನಾಡಲು ಮೈಕ್ ಒತ್ತಿ"
-                  : "🎙️ Tap the mic to speak to Bloom")}
+                  : "🎙️ Tap mic to speak to Bloom")}
               {(status === "listening" || isLiveListening) &&
-                (selectedLanguage === "hi-IN"
+                (engine === "cloud"
+                  ? "Listening with Deepgram... Tap mic when done speaking"
+                  : selectedLanguage === "hi-IN"
                   ? "सुन रही हूँ... अपनी बात कहें"
                   : selectedLanguage === "kn-IN"
                   ? "ಆಲಿಸುತ್ತಿದೆ... ಮಾತನಾಡಿ"
                   : "Listening to your microphone... (Speak now)")}
-              {status === "processing" && "Processing..."}
+              {status === "processing" &&
+                (engine === "cloud"
+                  ? "Deepgram Nova-3 transcribing audio..."
+                  : "Processing speech...")}
               {status === "speaking" &&
-                (selectedLanguage === "hi-IN"
+                (engine === "cloud"
+                  ? "🔊 Cartesia Sonic is speaking aloud..."
+                  : selectedLanguage === "hi-IN"
                   ? "🔊 ब्लूम बोल रही है..."
                   : selectedLanguage === "kn-IN"
                   ? "🔊 ಬ್ಲೂಮ್ ಮಾತನಾಡುತ್ತಿದೆ..."
@@ -445,10 +546,10 @@ export function VoiceModal({
           <View style={{ marginTop: 6 }}>
             <Body muted>
               {selectedLanguage === "hi-IN"
-                ? "या कोई उदाहरण चुनें:"
+                ? "या कोई उदाहरण चुनें (Cartesia Voice Playback):"
                 : selectedLanguage === "kn-IN"
                 ? "ಅಥವಾ ಉದಾಹರಣೆ ಕ್ಲಿಕ್ ಮಾಡಿ:"
-                : "Or tap a sample query:"}
+                : "Or tap a sample query (Cartesia Voice Playback):"}
             </Body>
             <View style={{ gap: 6, marginTop: 6 }}>
               {currentSamplePhrases.slice(0, 3).map((p) => (
