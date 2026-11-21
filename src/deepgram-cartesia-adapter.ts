@@ -1,6 +1,7 @@
 /**
  * Deepgram (STT) + Cartesia (TTS) Voice Adapter for BLOOM MED
- * Ultra-low latency cloud voice pipeline implementation
+ * Features Voice Activity Detection (VAD) / Silence Auto-Stop
+ * and ultra-low latency streaming for home healthcare.
  */
 
 import {
@@ -30,10 +31,26 @@ const DEEPGRAM_LANG_MAP: Record<VoiceLanguage, string> = {
   "te-IN": "te",
 };
 
+// Mapping VoiceLanguage to Cartesia ISO language codes
+const CARTESIA_LANG_MAP: Record<VoiceLanguage, string> = {
+  "en-IN": "en",
+  "hi-IN": "hi",
+  "kn-IN": "kn",
+  "ta-IN": "ta",
+  "te-IN": "te",
+};
+
+export interface DeepgramCaptureCallbacks {
+  onSilenceAutoStop?: () => void;
+  onVolumeChange?: (volume: number) => void;
+}
+
 export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   private activeAudio: HTMLAudioElement | null = null;
   private mediaRecorder: any = null;
   private recordedChunks: Blob[] = [];
+  private audioCtx: any = null;
+  private vadInterval: any = null;
 
   isConfigured(): boolean {
     return Boolean(DEEPGRAM_API_KEY && CARTESIA_API_KEY);
@@ -94,12 +111,11 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   }
 
   /**
-   * Synthesize natural speech using Cartesia Sonic (sub-100ms ultra-low latency TTS)
-   * Streams audio directly to the speaker using HTML5 Audio.
+   * Synthesize natural speech using Cartesia Sonic (sub-90ms ultra-low latency TTS)
    */
   async synthesizeSpeech(
     text: string,
-    _language: VoiceLanguage = "en-IN"
+    language: VoiceLanguage = "en-IN"
   ): Promise<{ synthesized: boolean; durationMs: number }> {
     this.stopSpeaking();
 
@@ -108,11 +124,12 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
     }
 
     try {
+      const cartesiaLang = CARTESIA_LANG_MAP[language] || "en";
       const response = await fetch("https://api.cartesia.ai/tts/bytes", {
         method: "POST",
         headers: {
           "X-API-Key": CARTESIA_API_KEY,
-          "Cartesia-Version": "2026-08-14",
+          "Cartesia-Version": "2024-06-10",
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -120,12 +137,14 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
           transcript: text,
           voice: {
             mode: "id",
-            id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", // Approachable, warm care voice
+            id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", // Skylar (approachable care persona)
           },
           output_format: {
             container: "mp3",
             sample_rate: 44100,
+            encoding: "mp3",
           },
+          language: cartesiaLang,
         }),
       });
 
@@ -154,7 +173,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         audio.onended = done;
         audio.onerror = done;
 
-        // Safety timeout so modal does not hang if playback fails
+        // Safety fallback timeout
         setTimeout(done, Math.max(3000, text.length * 90));
 
         audio.play().catch(() => {
@@ -167,7 +186,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   }
 
   /**
-   * Stop any active audio playback
+   * Stop any in-progress speech playback
    */
   stopSpeaking(): void {
     if (this.activeAudio) {
@@ -182,15 +201,18 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   }
 
   /**
-   * Start microphone capture using MediaRecorder
+   * Start microphone capture with Voice Activity Detection (VAD)
+   * Automatically stops 1.3 seconds after the user stops speaking!
    */
-  async startMicrophoneCapture(): Promise<boolean> {
+  async startMicrophoneCapture(callbacks?: DeepgramCaptureCallbacks): Promise<boolean> {
     if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       return false;
     }
 
     try {
+      this.cleanupVAD();
       this.recordedChunks = [];
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       this.mediaRecorder = recorder;
@@ -202,9 +224,73 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
       };
 
       recorder.start(100);
+
+      // Setup Web Audio API VAD (Silence Detector)
+      try {
+        const AudioContextClass =
+          window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioContextClass) {
+          const ctx = new AudioContextClass();
+          this.audioCtx = ctx;
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          let silenceStart = 0;
+          let speechDetected = false;
+          const recordingStartTime = Date.now();
+
+          this.vadInterval = setInterval(() => {
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
+            }
+            const avg = sum / dataArray.length;
+            callbacks?.onVolumeChange?.(avg);
+
+            const VOICE_THRESHOLD = 14;
+            if (avg > VOICE_THRESHOLD) {
+              speechDetected = true;
+              silenceStart = Date.now();
+            } else if (speechDetected) {
+              const silenceElapsed = Date.now() - silenceStart;
+              // If user spoke and has now paused for 1.2 seconds -> auto-stop!
+              if (silenceElapsed > 1200) {
+                this.cleanupVAD();
+                callbacks?.onSilenceAutoStop?.();
+              }
+            } else if (Date.now() - recordingStartTime > 8000) {
+              // Safety timeout: 8s with no speech detected -> auto-stop
+              this.cleanupVAD();
+              callbacks?.onSilenceAutoStop?.();
+            }
+          }, 100);
+        }
+      } catch {
+        // VAD optional; fallback to manual tap
+      }
+
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private cleanupVAD(): void {
+    if (this.vadInterval) {
+      clearInterval(this.vadInterval);
+      this.vadInterval = null;
+    }
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.close();
+      } catch {
+        // ignore
+      }
+      this.audioCtx = null;
     }
   }
 
@@ -212,6 +298,8 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
    * Stop microphone capture and return audio blob
    */
   async stopMicrophoneCapture(): Promise<Blob | null> {
+    this.cleanupVAD();
+
     return new Promise((resolve) => {
       if (!this.mediaRecorder) {
         resolve(null);
@@ -222,7 +310,6 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         try {
           const mimeType = this.mediaRecorder?.mimeType || "audio/webm";
           const blob = new Blob(this.recordedChunks, { type: mimeType });
-          // Stop all audio tracks
           this.mediaRecorder.stream?.getTracks().forEach((track: any) => track.stop());
           this.mediaRecorder = null;
           this.recordedChunks = [];
@@ -233,7 +320,11 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
       };
 
       try {
-        this.mediaRecorder.stop();
+        if (this.mediaRecorder.state !== "inactive") {
+          this.mediaRecorder.stop();
+        } else {
+          resolve(null);
+        }
       } catch {
         resolve(null);
       }

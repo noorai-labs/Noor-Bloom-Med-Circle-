@@ -1,8 +1,8 @@
 /**
  * Multilingual Voice Assistant Modal Component for BLOOM MED
- * Supports Dual Engines:
- * 1. ⚡ Deepgram (STT) + Cartesia Sonic (TTS) Cloud Engine
- * 2. 🌐 Browser Native Web Speech Engine
+ * Powered exclusively by:
+ * ⚡ Deepgram Nova-3 (STT) + Cartesia Sonic-3.6 (TTS)
+ * Features Voice Activity Detection (VAD) / Silence Auto-Stop
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -31,9 +31,7 @@ import {
   deepgramCartesiaAdapter,
 } from "./deepgram-cartesia-adapter";
 import {
-  isSpeechRecognitionSupported,
   MOCK_TEST_PHRASES,
-  speechAdapter,
   SUPPORTED_VOICE_LANGUAGES,
 } from "./voice-adapter";
 import {
@@ -41,8 +39,6 @@ import {
   VoiceLanguage,
   VoicePipelineStatus,
 } from "./voice-types";
-
-type VoiceEngine = "cloud" | "web";
 
 interface VoiceModalProps {
   visible: boolean;
@@ -55,7 +51,6 @@ export function VoiceModal({
   onClose,
   defaultLanguage = "en-IN",
 }: VoiceModalProps) {
-  const [engine, setEngine] = useState<VoiceEngine>("cloud");
   const [status, setStatus] = useState<VoicePipelineStatus>("idle");
   const [selectedLanguage, setSelectedLanguage] =
     useState<VoiceLanguage>(defaultLanguage);
@@ -68,8 +63,21 @@ export function VoiceModal({
   const [autoNavigating, setAutoNavigating] = useState<boolean>(false);
 
   const [pulseAnim] = useState(() => new Animated.Value(1));
-  const cancelLiveListeningRef = useRef<(() => void) | null>(null);
+  const isStoppingRef = useRef<boolean>(false);
   const autoNavTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function stopAll() {
+    isStoppingRef.current = false;
+    if (autoNavTimerRef.current) {
+      clearTimeout(autoNavTimerRef.current);
+      autoNavTimerRef.current = null;
+    }
+    deepgramCartesiaAdapter.stopSpeaking();
+    deepgramCartesiaAdapter.stopMicrophoneCapture().catch(() => {});
+    setIsLiveListening(false);
+    setAutoNavigating(false);
+    setStatus("idle");
+  }
 
   useEffect(() => {
     if (status === "listening" || isLiveListening) {
@@ -98,24 +106,6 @@ export function VoiceModal({
     };
   }, []);
 
-  function stopAll() {
-    if (cancelLiveListeningRef.current) {
-      cancelLiveListeningRef.current();
-      cancelLiveListeningRef.current = null;
-    }
-    if (autoNavTimerRef.current) {
-      clearTimeout(autoNavTimerRef.current);
-      autoNavTimerRef.current = null;
-    }
-    deepgramCartesiaAdapter.stopSpeaking();
-    deepgramCartesiaAdapter.stopMicrophoneCapture().catch(() => {});
-    speechAdapter.stopLiveListening();
-    speechAdapter.stopSpeaking();
-    setIsLiveListening(false);
-    setAutoNavigating(false);
-    setStatus("idle");
-  }
-
   function handleStop() {
     stopAll();
     setErrorMsg("");
@@ -142,10 +132,7 @@ export function VoiceModal({
     setIsLiveListening(false);
 
     try {
-      const activeAdapter =
-        engine === "cloud" ? deepgramCartesiaAdapter : speechAdapter;
-
-      const intentRes = activeAdapter.resolveIntent(
+      const intentRes = deepgramCartesiaAdapter.resolveIntent(
         finalText,
         selectedLanguage
       );
@@ -160,106 +147,75 @@ export function VoiceModal({
         }, 1500);
       }
 
-      await activeAdapter.synthesizeSpeech(
+      await deepgramCartesiaAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
       setStatus("idle");
     } catch {
       setStatus("error");
-      setErrorMsg("Error generating voice response.");
+      setErrorMsg("Error generating Cartesia voice response.");
     }
   }
 
-  async function startCloudMic() {
+  async function startMicrophone() {
     stopAll();
     setTranscript("");
     setResolution(null);
     setErrorMsg("");
     setIsLiveListening(true);
     setStatus("listening");
-
-    const started = await deepgramCartesiaAdapter.startMicrophoneCapture();
-    if (!started) {
-      setIsLiveListening(false);
-      setStatus("error");
-      setErrorMsg("Could not access microphone for Deepgram.");
-    }
-  }
-
-  async function stopCloudMic() {
-    setIsLiveListening(false);
-    setStatus("processing");
-
-    const blob = await deepgramCartesiaAdapter.stopMicrophoneCapture();
-    if (!blob) {
-      setStatus("idle");
-      return;
-    }
-
-    try {
-      const recognized = await deepgramCartesiaAdapter.transcribeAudioBlob(
-        blob,
-        selectedLanguage
-      );
-      if (!recognized) {
-        setStatus("idle");
-        setErrorMsg("Deepgram: No speech detected. Please speak clearly into the mic.");
-        return;
-      }
-      await handleSpokenTranscript(recognized);
-    } catch (err: any) {
-      setStatus("error");
-      setErrorMsg(err?.message || "Deepgram transcription failed.");
-    }
-  }
-
-  function startWebMicrophoneListening() {
-    stopAll();
-    setTranscript("");
-    setResolution(null);
-    setErrorMsg("");
 
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     }
 
-    if (!isSpeechRecognitionSupported()) {
-      const fallbackPhrase =
-        selectedLanguage === "hi-IN"
-          ? "मेरी दवाइयाँ दिखाओ"
-          : selectedLanguage === "kn-IN"
-          ? "ನನ್ನ ಮಾತ್ರೆಗಳು ತೋರಿಸಿ"
-          : "Show my medicines";
-      processPresetPhrase(fallbackPhrase);
-      return;
-    }
-
-    setIsLiveListening(true);
-    setStatus("listening");
-
-    const cleanup = speechAdapter.startLiveListening(selectedLanguage, {
-      onListeningStart: () => {
-        setStatus("listening");
-        setIsLiveListening(true);
-      },
-      onInterimTranscript: (interim) => {
-        setTranscript(interim);
-      },
-      onFinalTranscript: (finalText) => {
-        handleSpokenTranscript(finalText);
-      },
-      onError: (err) => {
-        setIsLiveListening(false);
-        setStatus("error");
-        setErrorMsg(err);
-      },
-      onEnd: () => {
-        setIsLiveListening(false);
+    const started = await deepgramCartesiaAdapter.startMicrophoneCapture({
+      onSilenceAutoStop: () => {
+        // Auto-stop detected via VAD when user finishes speaking!
+        stopMicrophoneAndTranscribe();
       },
     });
 
-    cancelLiveListeningRef.current = cleanup;
+    if (!started) {
+      setIsLiveListening(false);
+      setStatus("error");
+      setErrorMsg("Could not access microphone for Deepgram. Please check mic permissions.");
+    }
+  }
+
+  async function stopMicrophoneAndTranscribe() {
+    if (isStoppingRef.current) return;
+    isStoppingRef.current = true;
+
+    setIsLiveListening(false);
+    setStatus("processing");
+
+    try {
+      const blob = await deepgramCartesiaAdapter.stopMicrophoneCapture();
+      if (!blob) {
+        setStatus("idle");
+        return;
+      }
+
+      const recognized = await deepgramCartesiaAdapter.transcribeAudioBlob(
+        blob,
+        selectedLanguage
+      );
+
+      if (!recognized) {
+        setStatus("idle");
+        setErrorMsg("Deepgram: No speech detected. Please speak clearly into the mic.");
+        return;
+      }
+
+      await handleSpokenTranscript(recognized);
+    } catch (err: any) {
+      setStatus("error");
+      setErrorMsg(err?.message || "Deepgram transcription failed.");
+    } finally {
+      isStoppingRef.current = false;
+    }
   }
 
   async function processPresetPhrase(phrase: string) {
@@ -274,10 +230,7 @@ export function VoiceModal({
     }
 
     try {
-      const activeAdapter =
-        engine === "cloud" ? deepgramCartesiaAdapter : speechAdapter;
-
-      const intentRes = activeAdapter.resolveIntent(phrase, selectedLanguage);
+      const intentRes = deepgramCartesiaAdapter.resolveIntent(phrase, selectedLanguage);
       setResolution(intentRes);
 
       setStatus("speaking");
@@ -289,14 +242,14 @@ export function VoiceModal({
         }, 1600);
       }
 
-      await activeAdapter.synthesizeSpeech(
+      await deepgramCartesiaAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
       setStatus("idle");
     } catch {
       setStatus("error");
-      setErrorMsg("Could not synthesize speech.");
+      setErrorMsg("Could not synthesize speech with Cartesia.");
     }
   }
 
@@ -307,19 +260,12 @@ export function VoiceModal({
     }
 
     if (isLiveListening || status === "listening") {
-      if (engine === "cloud") {
-        stopCloudMic();
-      } else {
-        stopAll();
-      }
+      // User can optionally tap to stop early before VAD 1.2s timeout
+      stopMicrophoneAndTranscribe();
       return;
     }
 
-    if (engine === "cloud") {
-      startCloudMic();
-    } else {
-      startWebMicrophoneListening();
-    }
+    startMicrophone();
   }
 
   const currentSamplePhrases =
@@ -339,9 +285,18 @@ export function VoiceModal({
         <View style={localStyles.container}>
           {/* Header */}
           <View style={localStyles.header}>
-            <View style={globalStyles.row}>
-              <Icon name="mic" color={theme.green} size={24} />
-              <Title small>Bloom Voice Assistant</Title>
+            <View>
+              <View style={globalStyles.row}>
+                <Icon name="mic" color={theme.green} size={24} />
+                <Title small>Bloom Voice Assistant</Title>
+              </View>
+              <View style={localStyles.engineBadgeRow}>
+                <View style={localStyles.engineBadge}>
+                  <Text style={localStyles.engineBadgeText}>
+                    ⚡ Deepgram Nova-3 + Cartesia Sonic
+                  </Text>
+                </View>
+              </View>
             </View>
             <Touch
               onPress={() => {
@@ -352,34 +307,6 @@ export function VoiceModal({
             >
               <Icon name="close-circle-outline" color={theme.muted} size={26} />
             </Touch>
-          </View>
-
-          {/* Engine Selector: Deepgram + Cartesia vs Web Speech */}
-          <View style={{ marginBottom: 10 }}>
-            <Body muted>Select Voice Engine:</Body>
-            <View
-              style={[
-                globalStyles.row,
-                { flexWrap: "wrap", gap: 8, marginTop: 4 },
-              ]}
-            >
-              <Chip
-                title="⚡ Deepgram + Cartesia (Cloud AI)"
-                active={engine === "cloud"}
-                onPress={() => {
-                  stopAll();
-                  setEngine("cloud");
-                }}
-              />
-              <Chip
-                title="🌐 Web Speech (Browser)"
-                active={engine === "web"}
-                onPress={() => {
-                  stopAll();
-                  setEngine("web");
-                }}
-              />
-            </View>
           </View>
 
           {/* Multilingual Language Switcher */}
@@ -451,33 +378,24 @@ export function VoiceModal({
 
             <Text style={localStyles.statusText}>
               {status === "idle" &&
-                (engine === "cloud"
-                  ? "⚡ Deepgram: Tap mic, speak, then tap again to send"
-                  : selectedLanguage === "hi-IN"
-                  ? "🎙️ बात करने के लिए माइक दबाएँ"
+                (selectedLanguage === "hi-IN"
+                  ? "🎙️ माइक दबाएँ और बोलें (समाप्त होने पर अपने आप पहचान लेगा)"
                   : selectedLanguage === "kn-IN"
-                  ? "🎙️ ಮಾತನಾಡಲು ಮೈಕ್ ಒತ್ತಿ"
-                  : "🎙️ Tap mic to speak to Bloom")}
+                  ? "🎙️ ಮೈಕ್ ಒತ್ತಿ ಮಾತನಾಡಿ (ಮುಗಿದ ನಂತರ ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಕಳುಹಿಸುತ್ತದೆ)"
+                  : "🎙️ Tap mic & speak (auto-detects when you finish)")}
               {(status === "listening" || isLiveListening) &&
-                (engine === "cloud"
-                  ? "Listening with Deepgram... Tap mic when done speaking"
-                  : selectedLanguage === "hi-IN"
-                  ? "सुन रही हूँ... अपनी बात कहें"
+                (selectedLanguage === "hi-IN"
+                  ? "सुन रही हूँ... अपनी बात कहें (रुकने पर अपने आप भेजेगा)"
                   : selectedLanguage === "kn-IN"
-                  ? "ಆಲಿಸುತ್ತಿದೆ... ಮಾತನಾಡಿ"
-                  : "Listening to your microphone... (Speak now)")}
-              {status === "processing" &&
-                (engine === "cloud"
-                  ? "Deepgram Nova-3 transcribing audio..."
-                  : "Processing speech...")}
+                  ? "ಆಲಿಸುತ್ತಿದೆ... ಮಾತನಾಡಿ (ನಿಲ್ಲಿಸಿದ ತಕ್ಷಣ ಕಳುಹಿಸುತ್ತದೆ)"
+                  : "Listening with Deepgram... (Speak now, auto-detects pause)")}
+              {status === "processing" && "Deepgram Nova-3 transcribing audio..."}
               {status === "speaking" &&
-                (engine === "cloud"
-                  ? "🔊 Cartesia Sonic is speaking aloud..."
-                  : selectedLanguage === "hi-IN"
-                  ? "🔊 ब्लूम बोल रही है..."
+                (selectedLanguage === "hi-IN"
+                  ? "🔊 Cartesia Sonic बोल रही है..."
                   : selectedLanguage === "kn-IN"
-                  ? "🔊 ಬ್ಲೂಮ್ ಮಾತನಾಡುತ್ತಿದೆ..."
-                  : "🔊 Bloom is speaking aloud...")}
+                  ? "🔊 Cartesia Sonic ಮಾತನಾಡುತ್ತಿದೆ..."
+                  : "🔊 Cartesia Sonic is speaking aloud...")}
               {status === "error" && errorMsg}
             </Text>
 
@@ -615,6 +533,25 @@ const localStyles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+  },
+  engineBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 3,
+  },
+  engineBadge: {
+    backgroundColor: "#E6F4EA",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#CEEAD6",
+  },
+  engineBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: theme.green,
+    letterSpacing: 0.2,
   },
   visualizerBox: {
     alignItems: "center",
