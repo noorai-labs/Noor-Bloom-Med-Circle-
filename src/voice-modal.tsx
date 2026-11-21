@@ -1,11 +1,10 @@
 /**
  * Multilingual Voice Assistant Modal Component for BLOOM MED
- * Powered exclusively by:
- * ⚡ Deepgram Nova-3 (STT) + Cartesia Sonic-3.6 (TTS)
+ * Accessible Voice AI Agent with Dynamic Patient Schedule Reading
  * Features Voice Activity Detection (VAD) / Silence Auto-Stop
  */
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Modal,
@@ -30,6 +29,7 @@ import {
 import {
   deepgramCartesiaAdapter,
 } from "./deepgram-cartesia-adapter";
+import { ClinicContext } from "./store";
 import {
   MOCK_TEST_PHRASES,
   SUPPORTED_VOICE_LANGUAGES,
@@ -51,6 +51,8 @@ export function VoiceModal({
   onClose,
   defaultLanguage = "en-IN",
 }: VoiceModalProps) {
+  const clinicStore = useContext(ClinicContext);
+
   const [status, setStatus] = useState<VoicePipelineStatus>("idle");
   const [selectedLanguage, setSelectedLanguage] =
     useState<VoiceLanguage>(defaultLanguage);
@@ -124,6 +126,57 @@ export function VoiceModal({
     router.push(route as any);
   }
 
+  /**
+   * Reads real patient schedule & active medicines aloud from the clinic store
+   * Designed specifically for non-literate and elderly patients.
+   */
+  function enrichIntentWithClinicData(
+    intentRes: VoiceIntentResolution,
+    lang: VoiceLanguage
+  ): VoiceIntentResolution {
+    if (!clinicStore?.state) return intentRes;
+
+    if (intentRes.intent === "NAVIGATE_MEDICINES") {
+      const activeMeds = clinicStore.state.medicines.filter((m) => m.active);
+      if (activeMeds.length > 0) {
+        const medList = activeMeds
+          .map((m) => `${m.name} (${m.time})`)
+          .join(", ");
+        if (lang === "hi-IN") {
+          intentRes.spokenResponse = `आज आपकी ${activeMeds.length} दवाइयाँ हैं: ${medList}। मैं दवाइयों का पेज खोल रही हूँ।`;
+        } else if (lang === "kn-IN") {
+          intentRes.spokenResponse = `ಇಂದು ನಿಮಗೆ ${activeMeds.length} ಔಷಧಿಗಳಿವೆ: ${medList}. ಮಾತ್ರೆಗಳ ಪಟ್ಟಿಯನ್ನು ತೆರೆಯುತ್ತಿದ್ದೇನೆ.`;
+        } else if (lang === "ta-IN") {
+          intentRes.spokenResponse = `இன்று உங்களுக்கு ${activeMeds.length} மருந்துகள் உள்ளன: ${medList}.`;
+        } else if (lang === "te-IN") {
+          intentRes.spokenResponse = `ఈరోజు మీకు ${activeMeds.length} మందులు ఉన్నాయి: ${medList}.`;
+        } else {
+          intentRes.spokenResponse = `You have ${activeMeds.length} medicines scheduled today: ${medList}. Opening your medicines schedule.`;
+        }
+      }
+    } else if (intentRes.intent === "QUERY_NEXT_APPOINTMENT") {
+      const upcomingVisits = clinicStore.state.visits.filter(
+        (v) => !["Completed", "Cancelled"].includes(v.status)
+      );
+      if (upcomingVisits.length > 0) {
+        const nextV = upcomingVisits[0];
+        if (lang === "hi-IN") {
+          intentRes.spokenResponse = `आपकी अगली विज़िट ${nextV.date} को ${nextV.time} बजे है। अपॉइंटमेंट पेज खोल रही हूँ।`;
+        } else if (lang === "kn-IN") {
+          intentRes.spokenResponse = `ನಿಮ್ಮ ಮುಂದಿನ ಭೇಟಿ ${nextV.date} ರಂದು ${nextV.time} ಕ್ಕೆ ಇದೆ.`;
+        } else if (lang === "ta-IN") {
+          intentRes.spokenResponse = `உங்கள் அடுத்த சந்திப்பு ${nextV.date} அன்று ${nextV.time} மணிக்கு உள்ளது.`;
+        } else if (lang === "te-IN") {
+          intentRes.spokenResponse = `మీ తదుపరి అపాయింట్‌మెంట్ ${nextV.date}న ${nextV.time} గంటలకు ఉంది.`;
+        } else {
+          intentRes.spokenResponse = `Your next visit is for ${nextV.service} on ${nextV.date} at ${nextV.time}. Opening appointments.`;
+        }
+      }
+    }
+
+    return intentRes;
+  }
+
   async function handleSpokenTranscript(finalText: string) {
     if (!finalText.trim()) return;
 
@@ -132,10 +185,11 @@ export function VoiceModal({
     setIsLiveListening(false);
 
     try {
-      const intentRes = deepgramCartesiaAdapter.resolveIntent(
+      let intentRes = deepgramCartesiaAdapter.resolveIntent(
         finalText,
         selectedLanguage
       );
+      intentRes = enrichIntentWithClinicData(intentRes, selectedLanguage);
       setResolution(intentRes);
 
       setStatus("speaking");
@@ -144,7 +198,7 @@ export function VoiceModal({
         setAutoNavigating(true);
         autoNavTimerRef.current = setTimeout(() => {
           handleNavigate(intentRes.targetRoute!);
-        }, 1500);
+        }, 1800);
       }
 
       await deepgramCartesiaAdapter.synthesizeSpeech(
@@ -154,7 +208,7 @@ export function VoiceModal({
       setStatus("idle");
     } catch {
       setStatus("error");
-      setErrorMsg("Error generating Cartesia voice response.");
+      setErrorMsg("Error generating voice response.");
     }
   }
 
@@ -172,7 +226,6 @@ export function VoiceModal({
 
     const started = await deepgramCartesiaAdapter.startMicrophoneCapture({
       onSilenceAutoStop: () => {
-        // Auto-stop detected via VAD when user finishes speaking!
         stopMicrophoneAndTranscribe();
       },
     });
@@ -180,7 +233,7 @@ export function VoiceModal({
     if (!started) {
       setIsLiveListening(false);
       setStatus("error");
-      setErrorMsg("Could not access microphone for Deepgram. Please check mic permissions.");
+      setErrorMsg("Could not access microphone. Please check mic permissions.");
     }
   }
 
@@ -205,14 +258,14 @@ export function VoiceModal({
 
       if (!recognized) {
         setStatus("idle");
-        setErrorMsg("Deepgram: No speech detected. Please speak clearly into the mic.");
+        setErrorMsg("No speech detected. Please speak clearly into the mic.");
         return;
       }
 
       await handleSpokenTranscript(recognized);
     } catch (err: any) {
       setStatus("error");
-      setErrorMsg(err?.message || "Deepgram transcription failed.");
+      setErrorMsg(err?.message || "Transcription failed.");
     } finally {
       isStoppingRef.current = false;
     }
@@ -230,7 +283,8 @@ export function VoiceModal({
     }
 
     try {
-      const intentRes = deepgramCartesiaAdapter.resolveIntent(phrase, selectedLanguage);
+      let intentRes = deepgramCartesiaAdapter.resolveIntent(phrase, selectedLanguage);
+      intentRes = enrichIntentWithClinicData(intentRes, selectedLanguage);
       setResolution(intentRes);
 
       setStatus("speaking");
@@ -239,7 +293,7 @@ export function VoiceModal({
         setAutoNavigating(true);
         autoNavTimerRef.current = setTimeout(() => {
           handleNavigate(intentRes.targetRoute!);
-        }, 1600);
+        }, 1800);
       }
 
       await deepgramCartesiaAdapter.synthesizeSpeech(
@@ -249,7 +303,7 @@ export function VoiceModal({
       setStatus("idle");
     } catch {
       setStatus("error");
-      setErrorMsg("Could not synthesize speech with Cartesia.");
+      setErrorMsg("Could not synthesize speech.");
     }
   }
 
@@ -260,7 +314,6 @@ export function VoiceModal({
     }
 
     if (isLiveListening || status === "listening") {
-      // User can optionally tap to stop early before VAD 1.2s timeout
       stopMicrophoneAndTranscribe();
       return;
     }
@@ -285,18 +338,9 @@ export function VoiceModal({
         <View style={localStyles.container}>
           {/* Header */}
           <View style={localStyles.header}>
-            <View>
-              <View style={globalStyles.row}>
-                <Icon name="mic" color={theme.green} size={24} />
-                <Title small>Bloom Voice Assistant</Title>
-              </View>
-              <View style={localStyles.engineBadgeRow}>
-                <View style={localStyles.engineBadge}>
-                  <Text style={localStyles.engineBadgeText}>
-                    ⚡ Deepgram Nova-3 + Cartesia Sonic
-                  </Text>
-                </View>
-              </View>
+            <View style={globalStyles.row}>
+              <Icon name="mic" color={theme.green} size={24} />
+              <Title small>Bloom Voice Assistant</Title>
             </View>
             <Touch
               onPress={() => {
@@ -379,23 +423,44 @@ export function VoiceModal({
             <Text style={localStyles.statusText}>
               {status === "idle" &&
                 (selectedLanguage === "hi-IN"
-                  ? "🎙️ माइक दबाएँ और बोलें (समाप्त होने पर अपने आप पहचान लेगा)"
+                  ? "🎙️ बात करने के लिए माइक दबाएँ"
                   : selectedLanguage === "kn-IN"
-                  ? "🎙️ ಮೈಕ್ ಒತ್ತಿ ಮಾತನಾಡಿ (ಮುಗಿದ ನಂತರ ಸ್ವಯಂಚಾಲಿತವಾಗಿ ಕಳುಹಿಸುತ್ತದೆ)"
-                  : "🎙️ Tap mic & speak (auto-detects when you finish)")}
+                  ? "🎙️ ಮಾತನಾಡಲು ಮೈಕ್ ಒತ್ತಿ"
+                  : selectedLanguage === "ta-IN"
+                  ? "🎙️ பேச மைக் அழுத்தவும்"
+                  : selectedLanguage === "te-IN"
+                  ? "🎙️ మాట్లాడటానికి మైక్ నొక్కండి"
+                  : "🎙️ Tap mic & speak")}
               {(status === "listening" || isLiveListening) &&
                 (selectedLanguage === "hi-IN"
-                  ? "सुन रही हूँ... अपनी बात कहें (रुकने पर अपने आप भेजेगा)"
+                  ? "सुन रही हूँ..."
                   : selectedLanguage === "kn-IN"
-                  ? "ಆಲಿಸುತ್ತಿದೆ... ಮಾತನಾಡಿ (ನಿಲ್ಲಿಸಿದ ತಕ್ಷಣ ಕಳುಹಿಸುತ್ತದೆ)"
-                  : "Listening with Deepgram... (Speak now, auto-detects pause)")}
-              {status === "processing" && "Deepgram Nova-3 transcribing audio..."}
+                  ? "ಆಲಿಸುತ್ತಿದೆ..."
+                  : selectedLanguage === "ta-IN"
+                  ? "கேட்கிறது..."
+                  : selectedLanguage === "te-IN"
+                  ? "వింటున్నాను..."
+                  : "Listening...")}
+              {status === "processing" &&
+                (selectedLanguage === "hi-IN"
+                  ? "प्रोसेस हो रहा है..."
+                  : selectedLanguage === "kn-IN"
+                  ? "ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲಾಗುತ್ತಿದೆ..."
+                  : selectedLanguage === "ta-IN"
+                  ? "செயலாக்குகிறது..."
+                  : selectedLanguage === "te-IN"
+                  ? "ప్రాసెస్ చేస్తోంది..."
+                  : "Processing...")}
               {status === "speaking" &&
                 (selectedLanguage === "hi-IN"
-                  ? "🔊 Cartesia Sonic बोल रही है..."
+                  ? "🔊 बोल रही है..."
                   : selectedLanguage === "kn-IN"
-                  ? "🔊 Cartesia Sonic ಮಾತನಾಡುತ್ತಿದೆ..."
-                  : "🔊 Cartesia Sonic is speaking aloud...")}
+                  ? "🔊 ಮಾತನಾಡುತ್ತಿದೆ..."
+                  : selectedLanguage === "ta-IN"
+                  ? "🔊 பேசுகிறது..."
+                  : selectedLanguage === "te-IN"
+                  ? "🔊 మాట్లాడుతోంది..."
+                  : "🔊 Speaking...")}
               {status === "error" && errorMsg}
             </Text>
 
@@ -464,10 +529,14 @@ export function VoiceModal({
           <View style={{ marginTop: 6 }}>
             <Body muted>
               {selectedLanguage === "hi-IN"
-                ? "या कोई उदाहरण चुनें (Cartesia Voice Playback):"
+                ? "या कोई प्रश्न चुनें (बोलकर सुने):"
                 : selectedLanguage === "kn-IN"
-                ? "ಅಥವಾ ಉದಾಹರಣೆ ಕ್ಲಿಕ್ ಮಾಡಿ:"
-                : "Or tap a sample query (Cartesia Voice Playback):"}
+                ? "ಅಥವಾ ಧ್ವನಿಯಲ್ಲಿ ಕೇಳಲು ಆಯ್ಕೆಮಾಡಿ:"
+                : selectedLanguage === "ta-IN"
+                ? "அல்லது குரலில் கேட்க தேர்வு செய்யவும்:"
+                : selectedLanguage === "te-IN"
+                ? "లేదా వాయిస్‌లో వినడానికి ఎంచుకోండి:"
+                : "Or tap to hear Bloom speak:"}
             </Body>
             <View style={{ gap: 6, marginTop: 6 }}>
               {currentSamplePhrases.slice(0, 3).map((p) => (
@@ -533,25 +602,6 @@ const localStyles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
-  },
-  engineBadgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 3,
-  },
-  engineBadge: {
-    backgroundColor: "#E6F4EA",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#CEEAD6",
-  },
-  engineBadgeText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: theme.green,
-    letterSpacing: 0.2,
   },
   visualizerBox: {
     alignItems: "center",
