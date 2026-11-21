@@ -906,7 +906,7 @@ export function VisitScreen() {
           <Body>{consultation.text}</Body>
           <Label>PRESCRIPTION / CARE INSTRUCTIONS</Label>
           <Body>{consultation.prescription || "No prescription added."}</Body>
-          {consultation.followUp && (
+          {!!consultation.followUp && (
             <>
               <Chip
                 title={"Follow-up · " + formatDate(consultation.followUp)}
@@ -936,7 +936,7 @@ export function VisitScreen() {
           }
         />
       )}
-      {v.notes && v.status === "Completed" && (
+      {!!v.notes && v.status === "Completed" && (
         <Card>
           <Title small>Care visit summary</Title>
           <Body>{v.notes}</Body>

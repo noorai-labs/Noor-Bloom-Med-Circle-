@@ -545,16 +545,93 @@ async function route(
           "The patient needs an active manual identity review before booking.",
         );
     }
+    if (JSON.stringify(snapshot.state).includes(operationId)) {
+      return Response.json(visibleSnapshot(snapshot), {
+        headers: { "X-Idempotent-Replay": "true" },
+      });
+    }
     if (revision !== snapshot.revision)
       throw new HttpError(
         409,
         "Care data changed on another device. Refresh and try again.",
       );
-    if (JSON.stringify(snapshot.state).includes(operationId))
-      throw new HttpError(
-        409,
-        "This update has already been applied. Refresh your care data.",
+    if (action.type === "book") {
+      if (
+        !action.visit ||
+        typeof action.visit !== "object" ||
+        typeof action.visit.providerId !== "string" ||
+        typeof action.visit.date !== "string" ||
+        typeof action.visit.time !== "string"
+      ) {
+        throw new HttpError(400, "Invalid booking request.");
+      }
+      const existingSlot = await env.DB.prepare(`
+        SELECT 1 FROM appointment_slots 
+        WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')
+        UNION ALL
+        SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
+        WHERE json_extract(value, '$.providerId') = ?
+          AND json_extract(value, '$.date') = ?
+          AND json_extract(value, '$.time') = ?
+          AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+        LIMIT 1
+      `)
+        .bind(
+          action.visit.providerId,
+          action.visit.date,
+          action.visit.time,
+          action.visit.providerId,
+          action.visit.date,
+          action.visit.time,
+        )
+        .first();
+      if (existingSlot) {
+        throw new HttpError(
+          409,
+          "This slot is already booked for this care professional.",
+        );
+      }
+    }
+    if (action.type === "reschedule") {
+      if (
+        typeof action.visitId !== "string" ||
+        typeof action.date !== "string" ||
+        typeof action.time !== "string"
+      ) {
+        throw new HttpError(400, "Invalid reschedule request.");
+      }
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
       );
+      if (currentVisit) {
+        const targetSlot = await env.DB.prepare(`
+          SELECT 1 FROM appointment_slots 
+          WHERE provider_id=? AND date=? AND time=? AND visit_id!=? AND status IN ('Requested', 'Confirmed', 'In Progress')
+          UNION ALL
+          SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
+          WHERE json_extract(value, '$.providerId') = ?
+            AND json_extract(value, '$.date') = ?
+            AND json_extract(value, '$.time') = ?
+            AND json_extract(value, '$.id') != ?
+            AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+          LIMIT 1
+        `)
+          .bind(
+            currentVisit.providerId,
+            action.date,
+            action.time,
+            action.visitId,
+            currentVisit.providerId,
+            action.date,
+            action.time,
+            action.visitId,
+          )
+          .first();
+        if (targetSlot) {
+          throw new HttpError(409, "That slot is already booked.");
+        }
+      }
+    }
     if (
       ["record", "deleteRecord"].includes(action.type) &&
       snapshot.state.session?.role !== "Patient"
@@ -631,7 +708,240 @@ async function route(
         ),
       );
     }
-    const saved = await env.DB.batch(statements);
+    if (action.type === "book") {
+      const newVisit =
+        next.visits.find((v) => v.id.includes(operationId)) ||
+        next.visits[next.visits.length - 1];
+      if (newVisit) {
+        statements.push(
+          env.DB.prepare(
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) SELECT ?,?,?,?,?,?,? WHERE changes() > 0",
+          ).bind(
+            `slot_${space}_${newVisit.id}`,
+            newVisit.providerId,
+            newVisit.date,
+            newVisit.time,
+            space,
+            newVisit.id,
+            newVisit.status,
+          ),
+        );
+      }
+    }
+    if (action.type === "reschedule") {
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
+      const visit = next.visits.find((v) => v.id === action.visitId);
+      if (currentVisit && visit) {
+        statements.push(
+          env.DB.prepare(
+            `
+            UPDATE appointment_slots
+            SET id = COALESCE((
+                  SELECT 'slot_' || care_spaces.id || '_' || json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), id),
+                space_id = COALESCE((
+                  SELECT care_spaces.id
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), space_id),
+                visit_id = COALESCE((
+                  SELECT json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), visit_id),
+                status = COALESCE((
+                  SELECT json_extract(value, '$.status')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), 'Cancelled'),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE ((space_id=? AND visit_id=?) OR (provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress'))) AND changes() > 0
+          `,
+          ).bind(
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          ),
+        );
+
+        statements.push(
+          env.DB.prepare(
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) SELECT ?,?,?,?,?,?,? WHERE changes() > 0 ON CONFLICT(id) DO UPDATE SET date=excluded.date, time=excluded.time, status=excluded.status, updated_at=CURRENT_TIMESTAMP WHERE changes() > 0",
+          ).bind(
+            `slot_${space}_${action.visitId}`,
+            visit.providerId,
+            action.date,
+            action.time,
+            space,
+            action.visitId,
+            visit.status,
+          ),
+        );
+      }
+    }
+    if (
+      action.type === "status" &&
+      ["Cancelled", "Completed"].includes(action.status)
+    ) {
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
+      if (currentVisit) {
+        statements.push(
+          env.DB.prepare(
+            `
+            UPDATE appointment_slots
+            SET id = COALESCE((
+                  SELECT 'slot_' || care_spaces.id || '_' || json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), id),
+                space_id = COALESCE((
+                  SELECT care_spaces.id
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), space_id),
+                visit_id = COALESCE((
+                  SELECT json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), visit_id),
+                status = COALESCE((
+                  SELECT json_extract(value, '$.status')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE ((space_id=? AND visit_id=?) OR (provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress'))) AND changes() > 0
+          `,
+          ).bind(
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            action.status,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          ),
+        );
+      } else {
+        statements.push(
+          env.DB.prepare(
+            "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+          ).bind(action.status, space, action.visitId),
+        );
+      }
+    } else if (action.type === "status") {
+      statements.push(
+        env.DB.prepare(
+          "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+        ).bind(action.status, space, action.visitId),
+      );
+    }
+    let saved;
+    try {
+      saved = await env.DB.batch(statements);
+    } catch (dbError: unknown) {
+      const msg = dbError instanceof Error ? dbError.message : String(dbError);
+      if (
+        msg.includes("UNIQUE constraint failed") ||
+        msg.includes("constraint failed")
+      ) {
+        if (action.type === "reschedule") {
+          throw new HttpError(409, "That slot is already booked.");
+        }
+        throw new HttpError(
+          409,
+          "This slot is already booked for this care professional.",
+        );
+      }
+      throw dbError;
+    }
     if (!saved[0].meta.changes)
       throw new HttpError(409, "Care data changed. Refresh and try again.");
     if (
