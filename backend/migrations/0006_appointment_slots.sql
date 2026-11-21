@@ -17,6 +17,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS appointment_active_slot
 CREATE INDEX IF NOT EXISTS appointment_slots_space_visit
   ON appointment_slots(space_id, visit_id);
 
+CREATE TABLE IF NOT EXISTS completed_operations (
+  space_id TEXT NOT NULL REFERENCES care_spaces(id),
+  operation_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (space_id, operation_id)
+);
+
 INSERT OR IGNORE INTO appointment_slots (id, provider_id, date, time, space_id, visit_id, status)
 SELECT
   'slot_' || care_spaces.id || '_' || json_extract(value, '$.id'),

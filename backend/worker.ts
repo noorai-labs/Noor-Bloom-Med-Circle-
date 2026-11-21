@@ -545,7 +545,12 @@ async function route(
           "The patient needs an active manual identity review before booking.",
         );
     }
-    if (JSON.stringify(snapshot.state).includes(operationId)) {
+    const recordedOp = await env.DB.prepare(
+      "SELECT 1 FROM completed_operations WHERE space_id=? AND operation_id=?",
+    )
+      .bind(space, operationId)
+      .first();
+    if (recordedOp) {
       return Response.json(visibleSnapshot(snapshot), {
         headers: { "X-Idempotent-Replay": "true" },
       });
@@ -691,6 +696,9 @@ async function route(
         "care." + action.type,
         action.type === "deleteRecord" ? action.recordId : operationId,
       ),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO completed_operations(space_id, operation_id) SELECT ?,? WHERE changes()>0",
+      ).bind(space, operationId),
     ];
     if (action.type === "record") {
       const record = next.records[0];

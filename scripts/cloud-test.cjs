@@ -518,6 +518,55 @@ async function main() {
     "Idempotent retry must not create a second booking slot",
   );
 
+  // 6b. Regression test: A new operation ID appearing in unrelated saved text is processed normally
+  const textCollisionOp = randomUUID();
+  // Save unrelated text containing textCollisionOp in patient profile address
+  await mutate("user_patient", {
+    type: "profile",
+    profile: {
+      ...state.profile,
+      name: "Test Patient",
+      age: "30",
+      address: "Address with ref: " + textCollisionOp,
+    },
+    onboarding: true,
+  });
+  // Now request a new booking using that exact textCollisionOp
+  const bookingWithCollisionOp = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "11:30 AM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address Text Collision",
+        reason: "Consult with UUID in note text",
+      },
+    },
+    operationId: textCollisionOp,
+  });
+  assert.equal(
+    bookingWithCollisionOp.status,
+    200,
+    "Operation ID matching unrelated text must not be rejected or dropped",
+  );
+  assert.notEqual(
+    bookingWithCollisionOp.headers.get("x-idempotent-replay"),
+    "true",
+    "Request with new operation ID must not be treated as an idempotent replay",
+  );
+  revision = bookingWithCollisionOp.data.revision;
+  const collisionSlot = await db
+    .prepare(
+      "SELECT * FROM appointment_slots WHERE provider_id='1' AND date=? AND time=?",
+    )
+    .bind(day2, "11:30 AM")
+    .first();
+  assert.ok(collisionSlot, "Expected booking must be saved in appointment_slots");
+
   // 7. Reschedule Conflict Test & Lifecycle audit attribution
   const losingUser = resA.status === 409 ? "user_patient" : "user_patient_b";
   const losingEndpoint = resA.status === 409 ? endpoint : endpointB;
@@ -648,11 +697,86 @@ async function main() {
     "Stale revision must not insert a reservation into appointment_slots",
   );
 
-  // 10. Reconcile existing visits: Overlapping active appointments remain reserved on cancellation
+  // 10. Regression test: Seed two active legacy appointments for the same provider, date, and time in different care spaces
+  const legacySpace1 = "legacy_space_alpha";
+  const legacySpace2 = "legacy_space_beta";
+  const conflictDate = day2;
+  const conflictTime = "09:00 AM";
+  const legacyVisit1 = {
+    id: "visit_legacy_alpha",
+    providerId: "1",
+    date: conflictDate,
+    time: conflictTime,
+    service: "Home Visit",
+    frequency: "One visit",
+    address: "Alpha St",
+    reason: "Routine checkup",
+    status: "Confirmed",
+    checklist: [],
+    notes: "Legacy booking alpha",
+  };
+  const legacyVisit2 = {
+    id: "visit_legacy_beta",
+    providerId: "1",
+    date: conflictDate,
+    time: conflictTime,
+    service: "Home Visit",
+    frequency: "One visit",
+    address: "Beta St",
+    reason: "Follow-up visit",
+    status: "Requested",
+    checklist: [],
+    notes: "Legacy booking beta",
+  };
+
+  await db
+    .prepare("INSERT INTO care_spaces (id, state, revision) VALUES (?, ?, 0)")
+    .bind(legacySpace1, JSON.stringify({ ...state, visits: [legacyVisit1] }))
+    .run();
+  await db
+    .prepare("INSERT INTO care_spaces (id, state, revision) VALUES (?, ?, 0)")
+    .bind(legacySpace2, JSON.stringify({ ...state, visits: [legacyVisit2] }))
+    .run();
+
+  // Run the rollout reconciliation path
   const { reconcileAppointments } = require("./reconcile-appointments.cjs");
   const reconReport = await reconcileAppointments(db);
-  assert.equal(typeof reconReport.reconciled, "number");
-  assert.equal(typeof reconReport.duplicates, "number");
+
+  assert.ok(
+    reconReport.duplicates >= 1,
+    "Reconciliation must report detected legacy overlap conflicts",
+  );
+  const conflictDetail = reconReport.details.find(
+    (d) =>
+      d.type === "legacy_overlap" &&
+      d.providerId === "1" &&
+      d.date === conflictDate &&
+      d.time === conflictTime,
+  );
+  assert.ok(
+    conflictDetail,
+    "Reconciliation report must include the specific overlapping slot",
+  );
+  assert.equal(
+    conflictDetail.primarySpace,
+    legacySpace1,
+    "Report must identify primary care space",
+  );
+  assert.equal(
+    conflictDetail.primaryVisit,
+    "visit_legacy_alpha",
+    "Report must identify primary visit ID",
+  );
+  assert.equal(
+    conflictDetail.overlappingSpace,
+    legacySpace2,
+    "Report must identify conflicting care space",
+  );
+  assert.equal(
+    conflictDetail.overlappingVisit,
+    "visit_legacy_beta",
+    "Report must identify conflicting visit ID",
+  );
   await mutate("user_patient", {
     type: "dose",
     medicineId: state.medicines[0].id,

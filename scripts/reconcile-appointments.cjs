@@ -1,10 +1,19 @@
 // @ts-check
-const fs = require("node:fs");
-const path = require("node:path");
 
 /**
- * Reconciles active appointment visits from care_spaces JSON documents
- * into the centralized appointment_slots table.
+ * Rollout Reconciliation Guide:
+ *
+ * WHEN TO RUN:
+ * Run this utility immediately after executing migration `0006_appointment_slots.sql`
+ * during production rollout, prior to switching API traffic over to the updated Worker.
+ *
+ * HOW TO REVIEW:
+ * 1. Execute: `node scripts/reconcile-appointments.cjs` (or invoke via migration pipeline).
+ * 2. If `duplicates === 0`: All legacy appointments were cleanly indexed into appointment_slots.
+ * 3. If `duplicates > 0`: Review the returned `details` array. Each entry identifies a
+ *    legacy overlapping slot with both `primarySpace`/`primaryVisit` and
+ *    `overlappingSpace`/`overlappingVisit`. Coordinate with clinical ops to reschedule
+ *    or reassign the conflicting appointment before opening live booking traffic.
  *
  * @param {import("@cloudflare/workers-types").D1Database} db
  * @returns {Promise<{ reconciled: number, duplicates: number, details: Array<any> }>}
