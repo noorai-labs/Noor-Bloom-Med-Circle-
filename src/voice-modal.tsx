@@ -303,7 +303,7 @@ export function VoiceModal({
                 <Chip
                   key={lang.code}
                   title={lang.nativeLabel}
-                  selected={selectedLanguage === lang.code}
+                  active={selectedLanguage === lang.code}
                   onPress={() => {
                     stopAll();
                     setSelectedLanguage(lang.code);
@@ -331,13 +331,14 @@ export function VoiceModal({
             >
               <Touch
                 onPress={handleMicPress}
-                style={[
-                  localStyles.micButton,
-                  (status === "listening" || isLiveListening) && {
-                    backgroundColor: theme.green,
-                  },
-                  status === "speaking" && { backgroundColor: "#557EB9" },
-                ]}
+                style={{
+                  ...localStyles.micButton,
+                  ...(status === "listening" || isLiveListening
+                    ? { backgroundColor: theme.green }
+                    : status === "speaking"
+                    ? { backgroundColor: "#557EB9" }
+                    : {}),
+                }}
                 label="Microphone Button"
               >
                 <Icon
