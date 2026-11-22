@@ -241,13 +241,21 @@ export function MedicineReminderProvider({
     const listener = AppState.addEventListener("change", (value) => {
       if (value === "active") setRefresh((v) => v + 1);
     });
-    const tokenListener =
-      Platform.OS !== "web" && Constants.executionEnvironment !== "storeClient"
-        ? Notifications.addPushTokenListener(() => {
-            pushToken.current = "";
-            setRefresh((value) => value + 1);
-          })
-        : null;
+    let tokenListener: { remove: () => void } | null = null;
+    if (
+      Platform.OS !== "web" &&
+      Constants.executionEnvironment !== "storeClient" &&
+      (Constants as any).appOwnership !== "expo"
+    ) {
+      try {
+        tokenListener = Notifications.addPushTokenListener(() => {
+          pushToken.current = "";
+          setRefresh((value) => value + 1);
+        });
+      } catch {
+        // Android remote push notifications are unsupported in Expo Go (SDK 53+)
+      }
+    }
     const timer = setInterval(() => {
       if (cloudRef.current && AppState.currentState === "active")
         setRefresh((v) => v + 1);
