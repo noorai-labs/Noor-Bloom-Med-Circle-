@@ -41,12 +41,24 @@ export interface DeepgramCaptureCallbacks {
   onVolumeChange?: (volume: number) => void;
 }
 
+export interface DeepgramStreamingCallbacks {
+  onInterimTranscript?: (text: string) => void;
+  onFinalTranscript?: (text: string) => void;
+  onError?: (err: string) => void;
+  onBargeIn?: () => void;
+  onSpeechStarted?: () => void;
+  onVolumeChange?: (volume: number) => void;
+}
+
 export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   private activeAudio: HTMLAudioElement | null = null;
   private mediaRecorder: any = null;
   private recordedChunks: Blob[] = [];
   private audioCtx: any = null;
   private vadInterval: any = null;
+  private liveWs: WebSocket | null = null;
+  private activeStream: MediaStream | null = null;
+  private isSpeaking = false;
 
   isConfigured(): boolean {
     return Boolean(DEEPGRAM_API_KEY && CARTESIA_API_KEY);
@@ -148,6 +160,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         throw new Error(`Cartesia TTS error (${response.status})`);
       }
 
+      this.isSpeaking = true;
       const audioBytes = await response.arrayBuffer();
       const blob = new Blob([audioBytes], { type: "audio/mp3" });
       const audioUrl = URL.createObjectURL(blob);
@@ -160,6 +173,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         const done = () => {
           if (!finished) {
             finished = true;
+            this.isSpeaking = false;
             URL.revokeObjectURL(audioUrl);
             this.activeAudio = null;
             resolve({ synthesized: true, durationMs: 1500 });
@@ -177,6 +191,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         });
       });
     } catch {
+      this.isSpeaking = false;
       return { synthesized: false, durationMs: 1000 };
     }
   }
@@ -184,6 +199,186 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   /**
    * Stop any in-progress speech playback
    */
+  /**
+   * Start bidirectional live WebSocket streaming with Deepgram Nova-3.
+   * Features:
+   * - Real-time interim transcript updates as the user speaks
+   * - Mid-sentence pause tolerance (endpointing: 300)
+   * - Barge-In / Interruption detection: cuts off Bloom's audio when user speaks
+   */
+  async startLiveWebSocketSession(
+    language: VoiceLanguage = "en-IN",
+    callbacks?: DeepgramStreamingCallbacks
+  ): Promise<boolean> {
+    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      callbacks?.onError?.("Microphone is not supported in this environment.");
+      return false;
+    }
+    if (!DEEPGRAM_API_KEY) {
+      callbacks?.onError?.("Deepgram API key is not configured.");
+      return false;
+    }
+
+    try {
+      this.stopLiveWebSocketSession();
+
+      const langCode = DEEPGRAM_LANG_MAP[language] || "en";
+      const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&interim_results=true&endpointing=300&language=${langCode}`;
+
+      // Connect using Deepgram's browser subprotocol authentication
+      const ws = new WebSocket(wsUrl, ["token", DEEPGRAM_API_KEY]);
+      this.liveWs = ws;
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      this.activeStream = stream;
+
+      // Setup Web Audio API VAD for Barge-in detection & visualizer volume
+      try {
+        const AudioCtxClass =
+          window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtxClass) {
+          const ctx = new AudioCtxClass();
+          this.audioCtx = ctx;
+          const source = ctx.createMediaStreamSource(stream);
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          source.connect(analyser);
+
+          const dataArray = new Uint8Array(analyser.frequencyBinCount);
+          this.vadInterval = setInterval(() => {
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+              sum += dataArray[i];
+            }
+            const avg = sum / dataArray.length;
+            callbacks?.onVolumeChange?.(avg);
+
+            // BARGE-IN: If Bloom is speaking and user speaks (volume > 18) -> interrupt Bloom!
+            if (this.isSpeaking && avg > 18) {
+              this.stopSpeaking();
+              callbacks?.onBargeIn?.();
+            }
+          }, 80);
+        }
+      } catch {
+        // VAD optional
+      }
+
+      ws.onopen = () => {
+        let mimeType = "audio/webm";
+        if (typeof MediaRecorder !== "undefined") {
+          if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+            mimeType = "audio/webm;codecs=opus";
+          } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+            mimeType = "audio/mp4";
+          }
+        }
+
+        const recorder = new MediaRecorder(stream, { mimeType });
+        this.mediaRecorder = recorder;
+
+        recorder.ondataavailable = (event) => {
+          if (
+            event.data &&
+            event.data.size > 0 &&
+            ws.readyState === WebSocket.OPEN
+          ) {
+            ws.send(event.data);
+          }
+        };
+
+        // Stream audio chunks in 100ms real-time slices
+        recorder.start(100);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const alternative = data?.channel?.alternatives?.[0];
+          const transcript = alternative?.transcript || "";
+
+          if (transcript.trim()) {
+            callbacks?.onSpeechStarted?.();
+            callbacks?.onInterimTranscript?.(transcript.trim());
+          }
+
+          // When Deepgram detects speech completion
+          if (data?.speech_final && transcript.trim()) {
+            callbacks?.onFinalTranscript?.(transcript.trim());
+          }
+        } catch {
+          // ignore
+        }
+      };
+
+      ws.onerror = () => {
+        callbacks?.onError?.("Deepgram live streaming error.");
+      };
+
+      return true;
+    } catch (err: any) {
+      callbacks?.onError?.(err?.message || "Could not access microphone.");
+      return false;
+    }
+  }
+
+  /**
+   * Stop live WebSocket streaming and release all microphone hardware
+   */
+  stopLiveWebSocketSession(): void {
+    this.stopSpeaking();
+
+    if (this.vadInterval) {
+      clearInterval(this.vadInterval);
+      this.vadInterval = null;
+    }
+
+    if (this.audioCtx) {
+      try {
+        this.audioCtx.close();
+      } catch {
+        // ignore
+      }
+      this.audioCtx = null;
+    }
+
+    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+      try {
+        this.mediaRecorder.stop();
+      } catch {
+        // ignore
+      }
+      this.mediaRecorder = null;
+    }
+
+    if (this.liveWs) {
+      try {
+        if (
+          this.liveWs.readyState === WebSocket.OPEN ||
+          this.liveWs.readyState === WebSocket.CONNECTING
+        ) {
+          this.liveWs.close();
+        }
+      } catch {
+        // ignore
+      }
+      this.liveWs = null;
+    }
+
+    // Release microphone hardware completely (turns off hardware mic light)
+    if (this.activeStream) {
+      this.activeStream.getTracks().forEach((track) => track.stop());
+      this.activeStream = null;
+    }
+  }
+
   stopSpeaking(): void {
     if (this.activeAudio) {
       try {

@@ -1,7 +1,12 @@
 /**
- * Multilingual Voice Assistant Modal Component for BLOOM MED
- * Accessible Voice AI Agent with Dynamic Patient Schedule Reading
- * Features Voice Activity Detection (VAD) / Silence Auto-Stop
+ * Multilingual Voice Assistant Modal for BLOOM MED
+ * Gemini-style Minimalist Voice AI Agent
+ * - Deepgram Nova-3 Real-Time WebSocket Streaming (live words on screen)
+ * - Cartesia Sonic sub-90ms Speech Synthesis
+ * - Hands-Free Continuous Multi-Turn Conversation
+ * - Voice Activity Detection (VAD) with Mid-Sentence Pause Tolerance
+ * - Real-Time Interruption (Barge-In)
+ * - 60-Second Inactivity Auto-Close & Microphone Release
  */
 
 import React, { useContext, useEffect, useRef, useState } from "react";
@@ -16,14 +21,10 @@ import {
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
-  Body,
   Button,
-  Card,
   Chip,
   Icon,
-  styles as globalStyles,
   theme,
-  Title,
   Touch,
 } from "./components";
 import {
@@ -31,7 +32,6 @@ import {
 } from "./deepgram-cartesia-adapter";
 import { ClinicContext } from "./store";
 import {
-  MOCK_TEST_PHRASES,
   SUPPORTED_VOICE_LANGUAGES,
 } from "./voice-adapter";
 import {
@@ -61,38 +61,44 @@ export function VoiceModal({
     null
   );
   const [errorMsg, setErrorMsg] = useState<string>("");
-  const [isLiveListening, setIsLiveListening] = useState<boolean>(false);
-  const [autoNavigating, setAutoNavigating] = useState<boolean>(false);
 
   const [pulseAnim] = useState(() => new Animated.Value(1));
-  const isStoppingRef = useRef<boolean>(false);
-  const autoNavTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 60-Second Inactivity Timer (releases mic & closes session on silence)
+  function resetInactivityTimer() {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+    }
+    inactivityTimerRef.current = setTimeout(() => {
+      // 60 seconds with only background noise/silence -> end session & release microphone
+      stopAll();
+      onClose();
+    }, 60000);
+  }
 
   function stopAll() {
-    isStoppingRef.current = false;
-    if (autoNavTimerRef.current) {
-      clearTimeout(autoNavTimerRef.current);
-      autoNavTimerRef.current = null;
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
     }
     deepgramCartesiaAdapter.stopSpeaking();
-    deepgramCartesiaAdapter.stopMicrophoneCapture().catch(() => {});
-    setIsLiveListening(false);
-    setAutoNavigating(false);
+    deepgramCartesiaAdapter.stopLiveWebSocketSession();
     setStatus("idle");
   }
 
   useEffect(() => {
-    if (status === "listening" || isLiveListening) {
+    if (status === "listening" || status === "speaking") {
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
-            toValue: 1.25,
-            duration: 600,
+            toValue: 1.28,
+            duration: 650,
             useNativeDriver: Platform.OS !== "web",
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
-            duration: 600,
+            duration: 650,
             useNativeDriver: Platform.OS !== "web",
           }),
         ])
@@ -100,25 +106,13 @@ export function VoiceModal({
     } else {
       pulseAnim.setValue(1);
     }
-  }, [status, isLiveListening, pulseAnim]);
+  }, [status, pulseAnim]);
 
   useEffect(() => {
     return () => {
       stopAll();
     };
   }, []);
-
-  function handleStop() {
-    stopAll();
-    setErrorMsg("");
-  }
-
-  function handleRetry() {
-    stopAll();
-    setTranscript("");
-    setResolution(null);
-    setErrorMsg("");
-  }
 
   function handleNavigate(route: string) {
     stopAll();
@@ -180,9 +174,9 @@ export function VoiceModal({
   async function handleSpokenTranscript(finalText: string) {
     if (!finalText.trim()) return;
 
+    resetInactivityTimer();
     setTranscript(finalText);
     setStatus("processing");
-    setIsLiveListening(false);
 
     try {
       let intentRes = deepgramCartesiaAdapter.resolveIntent(
@@ -194,32 +188,27 @@ export function VoiceModal({
 
       setStatus("speaking");
 
-      // 1. Wait for Bloom to finish speaking the entire response aloud!
+      // Play audio response using Cartesia Sonic
       await deepgramCartesiaAdapter.synthesizeSpeech(
         intentRes.spokenResponse,
         selectedLanguage
       );
-      setStatus("idle");
 
-      // 2. ONLY navigate AFTER the full speech audio has finished playing!
-      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
-        setAutoNavigating(true);
-        autoNavTimerRef.current = setTimeout(() => {
-          handleNavigate(intentRes.targetRoute!);
-        }, 1200);
-      }
+      // Hands-Free Continuous Loop:
+      // The moment Bloom finishes speaking, seamlessly resume listening for next turn!
+      setStatus("listening");
+      resetInactivityTimer();
     } catch {
       setStatus("error");
       setErrorMsg("Error generating voice response.");
     }
   }
 
-  async function startMicrophone() {
+  async function startLiveSession() {
     stopAll();
     setTranscript("");
     setResolution(null);
     setErrorMsg("");
-    setIsLiveListening(true);
     setStatus("listening");
 
     if (Platform.OS !== "web") {
@@ -242,112 +231,62 @@ export function VoiceModal({
       }
     }
 
-    const started = await deepgramCartesiaAdapter.startMicrophoneCapture({
-      onSilenceAutoStop: () => {
-        stopMicrophoneAndTranscribe();
-      },
-    });
+    resetInactivityTimer();
+
+    const started = await deepgramCartesiaAdapter.startLiveWebSocketSession(
+      selectedLanguage,
+      {
+        onSpeechStarted: () => {
+          resetInactivityTimer();
+        },
+        onInterimTranscript: (interim) => {
+          // Real-time live words appearing on screen as the user speaks!
+          setTranscript(interim);
+        },
+        onFinalTranscript: (finalText) => {
+          handleSpokenTranscript(finalText);
+        },
+        onBargeIn: () => {
+          // User spoke while Bloom was speaking -> instantly cut off Bloom and listen!
+          setStatus("listening");
+          setTranscript("");
+          resetInactivityTimer();
+        },
+        onError: (err) => {
+          setStatus("error");
+          setErrorMsg(err);
+        },
+      }
+    );
 
     if (!started) {
-      setIsLiveListening(false);
       setStatus("error");
-      setErrorMsg("Could not access microphone. Please check mic permissions.");
-    }
-  }
-
-  async function stopMicrophoneAndTranscribe() {
-    if (isStoppingRef.current) return;
-    isStoppingRef.current = true;
-
-    setIsLiveListening(false);
-    setStatus("processing");
-
-    try {
-      const blob = await deepgramCartesiaAdapter.stopMicrophoneCapture();
-      if (!blob) {
-        setStatus("idle");
-        return;
-      }
-
-      const recognized = await deepgramCartesiaAdapter.transcribeAudioBlob(
-        blob,
-        selectedLanguage
-      );
-
-      if (!recognized) {
-        setStatus("idle");
-        setErrorMsg("No speech detected. Please speak clearly into the mic.");
-        return;
-      }
-
-      await handleSpokenTranscript(recognized);
-    } catch (err: any) {
-      setStatus("error");
-      setErrorMsg(err?.message || "Transcription failed.");
-    } finally {
-      isStoppingRef.current = false;
-    }
-  }
-
-  async function processPresetPhrase(phrase: string) {
-    stopAll();
-    setTranscript(phrase);
-    setResolution(null);
-    setErrorMsg("");
-    setStatus("processing");
-
-    if (Platform.OS !== "web") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    }
-
-    try {
-      let intentRes = deepgramCartesiaAdapter.resolveIntent(phrase, selectedLanguage);
-      intentRes = enrichIntentWithClinicData(intentRes, selectedLanguage);
-      setResolution(intentRes);
-
-      setStatus("speaking");
-
-      // 1. Wait for Bloom to finish speaking the entire response aloud!
-      await deepgramCartesiaAdapter.synthesizeSpeech(
-        intentRes.spokenResponse,
-        selectedLanguage
-      );
-      setStatus("idle");
-
-      // 2. ONLY navigate AFTER the full speech audio has finished playing!
-      if (intentRes.targetRoute && !intentRes.requiresConfirmation) {
-        setAutoNavigating(true);
-        autoNavTimerRef.current = setTimeout(() => {
-          handleNavigate(intentRes.targetRoute!);
-        }, 1200);
-      }
-    } catch {
-      setStatus("error");
-      setErrorMsg("Could not synthesize speech.");
+      setErrorMsg("Could not connect to live voice session.");
     }
   }
 
   function handleMicPress() {
     if (status === "speaking") {
+      // User tapped while Bloom was speaking -> pause audio immediately
+      deepgramCartesiaAdapter.stopSpeaking();
+      setStatus("listening");
+      return;
+    }
+
+    if (status === "listening" || status === "processing") {
+      // Tap to end session
       stopAll();
       return;
     }
 
-    if (isLiveListening || status === "listening") {
-      stopMicrophoneAndTranscribe();
-      return;
-    }
-
-    startMicrophone();
+    // Start live WebSocket hands-free session
+    startLiveSession();
   }
-
-  const currentSamplePhrases =
-    MOCK_TEST_PHRASES[selectedLanguage] || MOCK_TEST_PHRASES["en-IN"];
 
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="fade"
       transparent={true}
       onRequestClose={() => {
         stopAll();
@@ -356,11 +295,11 @@ export function VoiceModal({
     >
       <View style={localStyles.overlay}>
         <View style={localStyles.container}>
-          {/* Header */}
+          {/* Top Bar: Minimal Gemini-Style Brand & Close */}
           <View style={localStyles.header}>
-            <View style={globalStyles.row}>
-              <Icon name="mic" color={theme.green} size={24} />
-              <Title small>Bloom Voice Assistant</Title>
+            <View style={localStyles.brandRow}>
+              <View style={localStyles.statusDot} />
+              <Text style={localStyles.brandText}>Bloom</Text>
             </View>
             <Touch
               onPress={() => {
@@ -369,34 +308,26 @@ export function VoiceModal({
               }}
               label="Close"
             >
-              <Icon name="close-circle-outline" color={theme.muted} size={26} />
+              <Icon name="close" color={theme.muted} size={24} />
             </Touch>
           </View>
 
-          {/* Multilingual Language Switcher */}
-          <View style={{ marginBottom: 12 }}>
-            <Body muted>Select conversation language:</Body>
-            <View
-              style={[
-                globalStyles.row,
-                { flexWrap: "wrap", gap: 8, marginTop: 4 },
-              ]}
-            >
-              {SUPPORTED_VOICE_LANGUAGES.map((lang) => (
-                <Chip
-                  key={lang.code}
-                  title={lang.nativeLabel}
-                  active={selectedLanguage === lang.code}
-                  onPress={() => {
-                    stopAll();
-                    setSelectedLanguage(lang.code);
-                  }}
-                />
-              ))}
-            </View>
+          {/* Minimal Language Pill Selector */}
+          <View style={localStyles.langStrip}>
+            {SUPPORTED_VOICE_LANGUAGES.map((lang) => (
+              <Chip
+                key={lang.code}
+                title={lang.nativeLabel}
+                active={selectedLanguage === lang.code}
+                onPress={() => {
+                  stopAll();
+                  setSelectedLanguage(lang.code);
+                }}
+              />
+            ))}
           </View>
 
-          {/* Central Interactive Microphone Button */}
+          {/* Center Visualizer: Gemini-Style Glowing Orb */}
           <View style={localStyles.visualizerBox}>
             <Animated.View
               style={[
@@ -404,10 +335,10 @@ export function VoiceModal({
                 {
                   transform: [{ scale: pulseAnim }],
                   backgroundColor:
-                    status === "listening" || isLiveListening
-                      ? "rgba(20, 125, 104, 0.2)"
+                    status === "listening"
+                      ? "rgba(20, 125, 104, 0.15)"
                       : status === "speaking"
-                      ? "rgba(85, 126, 185, 0.2)"
+                      ? "rgba(85, 126, 185, 0.15)"
                       : "transparent",
                 },
               ]}
@@ -416,42 +347,43 @@ export function VoiceModal({
                 onPress={handleMicPress}
                 style={{
                   ...localStyles.micButton,
-                  ...(status === "listening" || isLiveListening
+                  ...(status === "listening"
                     ? { backgroundColor: theme.green }
                     : status === "speaking"
                     ? { backgroundColor: "#557EB9" }
                     : {}),
                 }}
-                label="Microphone Button"
+                label="Voice Orb"
               >
                 <Icon
                   name={
                     status === "speaking"
                       ? "volume-high"
                       : status === "processing"
-                      ? "hourglass-outline"
-                      : isLiveListening || status === "listening"
+                      ? "ellipsis-horizontal"
+                      : status === "listening"
                       ? "mic"
                       : "mic-outline"
                   }
                   color="white"
-                  size={32}
+                  size={36}
                 />
               </Touch>
             </Animated.View>
 
+            {/* Clean Status */}
             <Text style={localStyles.statusText}>
               {status === "idle" &&
                 (selectedLanguage === "hi-IN"
-                  ? "🎙️ बात करने के लिए माइक दबाएँ"
+                  ? "बात करने के लिए टैप करें"
                   : selectedLanguage === "kn-IN"
-                  ? "🎙️ ಮಾತನಾಡಲು ಮೈಕ್ ಒತ್ತಿ"
+                  ? "ಮಾತನಾಡಲು ಒತ್ತಿ"
                   : selectedLanguage === "ta-IN"
-                  ? "🎙️ பேச மைக் அழுத்தவும்"
+                  ? "பேச தட்டவும்"
                   : selectedLanguage === "te-IN"
-                  ? "🎙️ మాట్లాడటానికి మైక్ నొక్కండి"
-                  : "🎙️ Tap mic & speak")}
-              {(status === "listening" || isLiveListening) &&
+                  ? "మాట్లాడటానికి నొక్కండి"
+                  : "Tap to speak")}
+              {status === "listening" &&
                 (selectedLanguage === "hi-IN"
                   ? "सुन रही हूँ..."
                   : selectedLanguage === "kn-IN"
@@ -461,143 +393,53 @@ export function VoiceModal({
                   : selectedLanguage === "te-IN"
                   ? "వింటున్నాను..."
                   : "Listening...")}
-              {status === "processing" &&
-                (selectedLanguage === "hi-IN"
-                  ? "प्रोसेस हो रहा है..."
-                  : selectedLanguage === "kn-IN"
-                  ? "ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲಾಗುತ್ತಿದೆ..."
-                  : selectedLanguage === "ta-IN"
-                  ? "செயலாக்குகிறது..."
-                  : selectedLanguage === "te-IN"
-                  ? "ప్రాసెస్ చేస్తోంది..."
-                  : "Processing...")}
+              {status === "processing" && "..."}
               {status === "speaking" &&
                 (selectedLanguage === "hi-IN"
-                  ? "🔊 बोल रही है..."
+                  ? "बोल रही हूँ..."
                   : selectedLanguage === "kn-IN"
-                  ? "🔊 ಮಾತನಾಡುತ್ತಿದೆ..."
-                  : selectedLanguage === "ta-IN"
-                  ? "🔊 பேசுகிறது..."
-                  : selectedLanguage === "te-IN"
-                  ? "🔊 మాట్లాడుతోంది..."
-                  : "🔊 Speaking...")}
+                  ? "ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ..."
+                  : "Speaking...")}
               {status === "error" && errorMsg}
             </Text>
-
-            {autoNavigating && (
-              <View style={localStyles.autoNavBadge}>
-                <Icon name="arrow-forward-circle" color={theme.green} size={16} />
-                <Text style={localStyles.autoNavText}>
-                  {selectedLanguage === "hi-IN"
-                    ? "सीधे खोला जा रहा है..."
-                    : selectedLanguage === "kn-IN"
-                    ? "ನೇರವಾಗಿ ತೆರೆಯಲಾಗುತ್ತಿದೆ..."
-                    : "Opening tab directly..."}
-                </Text>
-              </View>
-            )}
           </View>
 
-          {/* Transcript & Response Display */}
+          {/* Floating Transcript Area */}
           {transcript !== "" && (
-            <Card style={localStyles.transcriptCard}>
-              <Body muted>
-                {selectedLanguage === "hi-IN"
-                  ? "आपने कहा:"
-                  : selectedLanguage === "kn-IN"
-                  ? "ನೀವು ಹೇಳಿದ್ದು:"
-                  : "You said:"}
-              </Body>
+            <View style={localStyles.transcriptBubble}>
               <Text style={localStyles.transcriptText}>
                 &ldquo;{transcript}&rdquo;
               </Text>
-
-              {resolution && (
-                <View style={{ marginTop: 10, gap: 8 }}>
-                  <Text style={localStyles.responseText}>
-                    {resolution.spokenResponse}
-                  </Text>
-
-                  {resolution.isMedicalQuery && (
-                    <View style={localStyles.guardrailBadge}>
-                      <Icon
-                        name="shield-checkmark"
-                        color={theme.red}
-                        size={16}
-                      />
-                      <Text style={localStyles.guardrailText}>
-                        Clinical Guardrail: Medical Advice Refused
-                      </Text>
-                    </View>
-                  )}
-
-                  {resolution.targetRoute && (
-                    <Button
-                      title={`Open ${resolution.targetRoute.replace(
-                        /[\/()]/g,
-                        ""
-                      )} →`}
-                      onPress={() => handleNavigate(resolution.targetRoute!)}
-                    />
-                  )}
-                </View>
-              )}
-            </Card>
+            </View>
           )}
 
-          {/* Quick Queries in Current Language */}
-          <View style={{ marginTop: 6 }}>
-            <Body muted>
-              {selectedLanguage === "hi-IN"
-                ? "या कोई प्रश्न चुनें (बोलकर सुने):"
-                : selectedLanguage === "kn-IN"
-                ? "ಅಥವಾ ಧ್ವನಿಯಲ್ಲಿ ಕೇಳಲು ಆಯ್ಕೆಮಾಡಿ:"
-                : selectedLanguage === "ta-IN"
-                ? "அல்லது குரலில் கேட்க தேர்வு செய்யவும்:"
-                : selectedLanguage === "te-IN"
-                ? "లేదా వాయిస్‌లో వినడానికి ఎంచుకోండి:"
-                : "Or tap to hear Bloom speak:"}
-            </Body>
-            <View style={{ gap: 6, marginTop: 6 }}>
-              {currentSamplePhrases.slice(0, 3).map((p) => (
-                <Touch
-                  key={p}
-                  style={localStyles.testPhraseButton}
-                  onPress={() => processPresetPhrase(p)}
-                  label={p}
-                >
-                  <Icon
-                    name="play-circle-outline"
-                    size={18}
-                    color={theme.green}
-                  />
-                  <Text style={localStyles.testPhraseText}>{p}</Text>
-                </Touch>
-              ))}
-            </View>
-          </View>
+          {/* Floating Spoken Response & Action Button */}
+          {resolution && (
+            <View style={localStyles.responseCard}>
+              <Text style={localStyles.responseText}>
+                {resolution.spokenResponse}
+              </Text>
 
-          {/* Controls: Stop / Retry / Type Instead */}
-          <View style={[globalStyles.row, { gap: 10, marginTop: 14 }]}>
-            {(status !== "idle" || isLiveListening) && (
-              <View style={{ flex: 1 }}>
-                <Button title="Stop Audio" secondary danger onPress={handleStop} />
-              </View>
-            )}
-            <View style={{ flex: 1 }}>
-              <Button title="Retry" secondary onPress={handleRetry} />
+              {resolution.targetRoute && (
+                <View style={{ marginTop: 12 }}>
+                  <Button
+                    title={`Open ${resolution.targetRoute.replace(
+                      /[\/()]/g,
+                      ""
+                    )} →`}
+                    onPress={() => handleNavigate(resolution.targetRoute!)}
+                  />
+                </View>
+              )}
             </View>
-            <View style={{ flex: 1 }}>
-              <Button
-                title="Type Instead"
-                secondary
-                onPress={() => {
-                  stopAll();
-                  onClose();
-                }}
-              />
-            </View>
-          </View>
+          )}
+
+          {/* Subtle Hands-free Indicator */}
+          {status === "listening" && (
+            <Text style={localStyles.handsFreeHint}>
+              Hands-free continuous session · Say &ldquo;Stop&rdquo; or pause to exit
+            </Text>
+          )}
         </View>
       </View>
     </Modal>
@@ -607,115 +449,111 @@ export function VoiceModal({
 const localStyles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
     justifyContent: "flex-end",
   },
   container: {
     backgroundColor: "white",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    padding: 22,
-    maxHeight: "92%",
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+    paddingBottom: 32,
+    maxHeight: "88%",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 16,
+  },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.green,
+  },
+  brandText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: theme.ink,
+    letterSpacing: -0.3,
+  },
+  langStrip: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 24,
   },
   visualizerBox: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 8,
+    paddingVertical: 18,
   },
   pulseRing: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     alignItems: "center",
     justifyContent: "center",
   },
   micButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: theme.green,
     alignItems: "center",
     justifyContent: "center",
-    elevation: 4,
+    elevation: 6,
     shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
   },
   statusText: {
-    marginTop: 8,
-    fontSize: 14,
+    marginTop: 14,
+    fontSize: 15,
+    fontWeight: "600",
+    color: theme.muted,
+    textAlign: "center",
+  },
+  transcriptBubble: {
+    backgroundColor: "#F4F7F6",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 16,
+    marginVertical: 8,
+    alignSelf: "center",
+    maxWidth: "92%",
+  },
+  transcriptText: {
+    fontSize: 16,
     fontWeight: "600",
     color: theme.ink,
     textAlign: "center",
   },
-  autoNavBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
+  responseCard: {
     backgroundColor: theme.mint,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    marginTop: 6,
-  },
-  autoNavText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: theme.green,
-  },
-  transcriptCard: {
-    backgroundColor: theme.mint,
+    padding: 16,
+    borderRadius: 18,
+    marginTop: 8,
     borderColor: "#CDEFE5",
-    padding: 12,
-    borderRadius: 14,
-    marginVertical: 8,
-  },
-  transcriptText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: theme.ink,
-    marginTop: 2,
+    borderWidth: 1,
   },
   responseText: {
-    fontSize: 14,
+    fontSize: 15,
     color: theme.ink,
-    lineHeight: 20,
-  },
-  guardrailBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#FBE0E5",
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    alignSelf: "flex-start",
-  },
-  guardrailText: {
-    fontSize: 12,
-    color: theme.red,
-    fontWeight: "600",
-  },
-  testPhraseButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.bg,
-  },
-  testPhraseText: {
-    fontSize: 13,
-    color: theme.ink,
+    lineHeight: 22,
     fontWeight: "500",
+  },
+  handsFreeHint: {
+    fontSize: 12,
+    color: theme.muted,
+    textAlign: "center",
+    marginTop: 16,
   },
 });
