@@ -351,6 +351,122 @@ module.exports = async ({ db, request, mf }) => {
   assert.equal(postDisallowed.status, 405);
   assert.equal(postDisallowed.data.error, "Method not allowed.");
 
+  // 12. Full end-to-end path through real submission, approval, and discovery
+  const e2eApplicant = "e2e_doctor_applicant_" + randomUUID().slice(0, 8);
+  const pdfContent = "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF";
+  const uploadRes = await request(
+    e2eApplicant,
+    "/v1/verification/documents?consent=1&name=qualification.pdf",
+    "POST",
+    pdfContent,
+    "application/pdf",
+  );
+  assert.equal(uploadRes.status, 200, JSON.stringify(uploadRes.data));
+  const docEvidenceId = uploadRes.data.id;
+
+  // Submit doctor verification with specialty, languages (including whitespace and empty items), and modes
+  const submissionRes = await request(
+    e2eApplicant,
+    "/v1/verification/submit",
+    "POST",
+    {
+      kind: "Doctor",
+      revision: 0,
+      details: {
+        fullName: "Dr. FullPath Specialist",
+        country: "India",
+        authority: "Karnataka Medical Council",
+        registrationNumber: "KMC-E2E-7788",
+        qualification: "MBBS, DM - Cardiology",
+        consent: true,
+        specialty: "  Cardiology  ",
+        languages: ["  Kannada  ", "English", "  ", ""],
+        modes: ["video", "invalid_mode"],
+      },
+      documents: [docEvidenceId],
+    },
+  );
+  assert.equal(submissionRes.status, 200, JSON.stringify(submissionRes.data));
+  const submissionId = submissionRes.data.id;
+
+  // Reviewer approves the application via the real review endpoint
+  const reviewerUser = "provider_e2e_reviewer";
+  await db
+    .prepare(
+      "INSERT OR REPLACE INTO verification_reviewers(user_id,active) VALUES (?,1)",
+    )
+    .bind(reviewerUser)
+    .run();
+
+  const reviewRes = await request(
+    reviewerUser,
+    "/v1/verification/review",
+    "POST",
+    {
+      id: submissionId,
+      revision: 1,
+      status: "Approved",
+      reason: "Verified credentials against national medical registry",
+      identityReference: "AADHAAR-VERIFIED-E2E",
+      registrationReference: "KMC-REG-CHECKED-OK",
+      validUntil: futureDate,
+    },
+  );
+  assert.equal(reviewRes.status, 200, JSON.stringify(reviewRes.data));
+
+  // Now verify that the real submitted & approved clinician is discoverable via GET /v1/providers
+  // Specialty filter
+  const e2eSpecialty = await request(
+    patientUser,
+    "/v1/providers?specialty=cardiology",
+  );
+  assert.equal(e2eSpecialty.status, 200);
+  const foundBySpecialty = e2eSpecialty.data.providers.find(
+    (p) => p.id === e2eApplicant,
+  );
+  assert.ok(foundBySpecialty, "Provider submitted with specialty must be discoverable");
+  assert.equal(foundBySpecialty.specialty, "Cardiology");
+  assert.deepEqual(foundBySpecialty.languages, ["Kannada", "English"]);
+  assert.deepEqual(foundBySpecialty.modes, ["video"]);
+
+  // Language filter
+  const e2eLanguage = await request(
+    patientUser,
+    "/v1/providers?language=kannada",
+  );
+  assert.equal(e2eLanguage.status, 200);
+  assert.ok(
+    e2eLanguage.data.providers.some((p) => p.id === e2eApplicant),
+    "Provider submitted with Kannada language must be discoverable",
+  );
+
+  // Mode filter (video consultation mode)
+  const e2eMode = await request(patientUser, "/v1/providers?mode=video");
+  assert.equal(e2eMode.status, 200);
+  assert.ok(
+    e2eMode.data.providers.some((p) => p.id === e2eApplicant),
+    "Provider submitted with video mode must be discoverable",
+  );
+
+  // Negative filter check: In-person filter should NOT match this video-only provider
+  const e2eInPerson = await request(
+    patientUser,
+    "/v1/providers?mode=in-person",
+  );
+  assert.equal(e2eInPerson.status, 200);
+  assert.ok(
+    !e2eInPerson.data.providers.some((p) => p.id === e2eApplicant),
+    "Provider offering only video mode must not appear in in-person filter",
+  );
+
+  // Negative filter check: Non-matching specialty
+  const e2eNoMatch = await request(
+    patientUser,
+    "/v1/providers?specialty=Dermatology",
+  );
+  assert.equal(e2eNoMatch.status, 200);
+  assert.ok(!e2eNoMatch.data.providers.some((p) => p.id === e2eApplicant));
+
   console.log(
     "Passed: provider directory discovery, approved/unapproved/expired gates, zero data leakage, filters, pagination and input validation.",
   );

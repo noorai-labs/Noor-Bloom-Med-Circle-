@@ -15,6 +15,9 @@ export type VerificationDetails = {
   registrationNumber: string;
   qualification: string;
   consent: boolean;
+  specialty?: string;
+  languages?: string[];
+  modes?: string[];
 };
 export type VerificationApplication = {
   id: string;
