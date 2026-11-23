@@ -79,4 +79,53 @@ const unknownRes = resolveVoiceIntent("Blah blah gibberish xyz", "en-IN");
 assert.equal(unknownRes.intent, "UNKNOWN_INTENT");
 assert.equal(unknownRes.targetRoute, undefined);
 
-console.log("Voice pipeline prototype tests passed: intent routing, multilingual support (Hindi, Kannada), clinical guardrails, navigation targets and languages.");
+// 6. Unified Patient Knowledge & Multi-Turn Context Tests
+const { evaluatePatientKnowledge } = load("src/voice-context-engine.ts");
+
+const mockClinicState = {
+  profile: {
+    name: "Amina Begum",
+    allergies: "Penicillin",
+  },
+  medicines: [
+    { id: "m1", name: "Metformin", dosage: "500mg", time: "8:00 AM", active: true, logs: {} },
+    { id: "m2", name: "Atorvastatin", dosage: "20mg", time: "8:00 PM", active: true, logs: {} },
+  ],
+  records: [
+    { id: "r1", name: "Complete Blood Count", category: "Lab Report", date: "2026-11-14", detail: "Normal HbA1c" },
+  ],
+  consultations: [
+    { id: "c1", text: "Low-salt diet and morning walk", followUp: "2 weeks" },
+  ],
+  visits: [
+    { id: "v1", service: "Cardiology Follow-up", date: "2026-11-25", time: "10:30 AM", status: "Confirmed" },
+  ],
+};
+
+// A. Health Records Knowledge
+const recordsRes = evaluatePatientKnowledge("What are my lab reports and blood test?", "en-IN", mockClinicState);
+assert.equal(recordsRes.intent, "NAVIGATE_RECORDS");
+assert.equal(recordsRes.spokenResponse.includes("Complete Blood Count"), true);
+
+// B. Doctor Consultation Knowledge
+const consultRes = evaluatePatientKnowledge("What did the doctor say in my consultation?", "en-IN", mockClinicState);
+assert.equal(consultRes.spokenResponse.includes("Low-salt diet"), true);
+
+// C. Fuzzy Medicine Lookup (handles phonetic mispronunciation)
+const fuzzyRes = evaluatePatientKnowledge("Tell me about my metaformin pill", "en-IN", mockClinicState);
+assert.equal(fuzzyRes.intent, "NAVIGATE_MEDICINES");
+assert.equal(fuzzyRes.spokenResponse.includes("Metformin"), true);
+
+// D. Multi-Turn Conversational Memory (context persistence)
+const followUpRes = evaluatePatientKnowledge("Should I take it with food?", "en-IN", mockClinicState, [
+  { user: "Tell me about my Atorvastatin", bloom: "Atorvastatin is scheduled for 8:00 PM", entityName: "Atorvastatin" }
+]);
+assert.equal(followUpRes.spokenResponse.includes("Atorvastatin"), true);
+
+// E. Emergency Distress Detection
+const emergencyRes = evaluatePatientKnowledge("I have chest pain and cannot breathe", "en-IN", mockClinicState);
+assert.equal(emergencyRes.intent, "EMERGENCY_SOS");
+assert.equal(emergencyRes.isEmergencyAlert, true);
+assert.equal(emergencyRes.targetRoute, "/sos");
+
+console.log("Voice pipeline prototype tests passed: intent routing, multilingual support (Hindi, Kannada), clinical guardrails, navigation targets, records knowledge, fuzzy matching, multi-turn memory, and emergency alerts.");

@@ -1,12 +1,14 @@
 /**
  * Multilingual Voice Assistant Modal for BLOOM MED
- * Gemini-style Minimalist Voice AI Agent
- * - Deepgram Nova-3 Real-Time WebSocket Streaming (live words on screen)
- * - Cartesia Sonic sub-90ms Speech Synthesis
- * - Hands-Free Continuous Multi-Turn Conversation
- * - Voice Activity Detection (VAD) with Mid-Sentence Pause Tolerance
- * - Real-Time Interruption (Barge-In)
- * - 60-Second Inactivity Auto-Close & Microphone Release
+ * Next-Gen Gemini Live & ChatGPT Advanced Voice Style
+ * - Deepgram Nova-3 Real-Time WebSocket Streaming with Interim Words
+ * - Cartesia Sonic Ultra-Low Latency Speech Synthesis
+ * - Unified Patient Knowledge Engine (Records, Consultations, Medicines, Vitals, Allergies)
+ * - Multi-Turn Conversational Context & Memory Persistence
+ * - Real-Time Audio-Reactive Glowing Visualizer Orb
+ * - Real-Time Barge-In Interruption
+ * - Hands-Free Continuous Multi-Turn Loop
+ * - 60-Second Inactivity Hardware Auto-Release
  */
 
 import React, { useContext, useEffect, useRef, useState } from "react";
@@ -22,9 +24,7 @@ import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import {
   Button,
-  Chip,
   Icon,
-  theme,
   Touch,
 } from "./components";
 import {
@@ -35,10 +35,14 @@ import {
   SUPPORTED_VOICE_LANGUAGES,
 } from "./voice-adapter";
 import {
-  VoiceIntentResolution,
   VoiceLanguage,
   VoicePipelineStatus,
 } from "./voice-types";
+import {
+  AdvancedVoiceResponse,
+  ConversationTurn,
+  evaluatePatientKnowledge,
+} from "./voice-context-engine";
 
 interface VoiceModalProps {
   visible: boolean;
@@ -57,12 +61,15 @@ export function VoiceModal({
   const [selectedLanguage, setSelectedLanguage] =
     useState<VoiceLanguage>(defaultLanguage);
   const [transcript, setTranscript] = useState<string>("");
-  const [resolution, setResolution] = useState<VoiceIntentResolution | null>(
-    null
-  );
+  const [resolution, setResolution] = useState<AdvancedVoiceResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [micVolume, setMicVolume] = useState<number>(0);
+  const [history, setHistory] = useState<ConversationTurn[]>([]);
 
-  const [pulseAnim] = useState(() => new Animated.Value(1));
+  // Animation values for the Gemini Live glowing visualizer orb
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const waveAnim1 = useRef(new Animated.Value(1)).current;
+  const waveAnim2 = useRef(new Animated.Value(1)).current;
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 60-Second Inactivity Timer (releases mic & closes session on silence)
@@ -71,7 +78,7 @@ export function VoiceModal({
       clearTimeout(inactivityTimerRef.current);
     }
     inactivityTimerRef.current = setTimeout(() => {
-      // 60 seconds with only background noise/silence -> end session & release microphone
+      // 60 seconds of silence -> close session & release microphone hardware completely
       stopAll();
       onClose();
     }, 60000);
@@ -85,28 +92,75 @@ export function VoiceModal({
     deepgramCartesiaAdapter.stopSpeaking();
     deepgramCartesiaAdapter.stopLiveWebSocketSession();
     setStatus("idle");
+    setMicVolume(0);
   }
 
+  // Visualizer Orb Animations
   useEffect(() => {
-    if (status === "listening" || status === "speaking") {
-      Animated.loop(
+    if (status === "listening" || status === "speaking" || status === "processing") {
+      // Outer ripple wave 1
+      const wave1Loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(waveAnim1, {
+            toValue: 1.35,
+            duration: 1100,
+            useNativeDriver: Platform.OS !== "web",
+          }),
+          Animated.timing(waveAnim1, {
+            toValue: 1.0,
+            duration: 1100,
+            useNativeDriver: Platform.OS !== "web",
+          }),
+        ])
+      );
+
+      // Mid shimmer wave 2
+      const wave2Loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(waveAnim2, {
+            toValue: 1.2,
+            duration: 850,
+            useNativeDriver: Platform.OS !== "web",
+          }),
+          Animated.timing(waveAnim2, {
+            toValue: 1.0,
+            duration: 850,
+            useNativeDriver: Platform.OS !== "web",
+          }),
+        ])
+      );
+
+      // Core pulse
+      const pulseLoop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
-            toValue: 1.28,
+            toValue: 1.15,
             duration: 650,
             useNativeDriver: Platform.OS !== "web",
           }),
           Animated.timing(pulseAnim, {
-            toValue: 1,
+            toValue: 1.0,
             duration: 650,
             useNativeDriver: Platform.OS !== "web",
           }),
         ])
-      ).start();
+      );
+
+      wave1Loop.start();
+      wave2Loop.start();
+      pulseLoop.start();
+
+      return () => {
+        wave1Loop.stop();
+        wave2Loop.stop();
+        pulseLoop.stop();
+      };
     } else {
       pulseAnim.setValue(1);
+      waveAnim1.setValue(1);
+      waveAnim2.setValue(1);
     }
-  }, [status, pulseAnim]);
+  }, [status, pulseAnim, waveAnim1, waveAnim2]);
 
   useEffect(() => {
     return () => {
@@ -121,56 +175,9 @@ export function VoiceModal({
   }
 
   /**
-   * Reads real patient schedule & active medicines aloud from the clinic store
-   * Designed specifically for non-literate and elderly patients.
+   * Process final spoken transcript using the Unified Patient Knowledge Engine
+   * and conversational history
    */
-  function enrichIntentWithClinicData(
-    intentRes: VoiceIntentResolution,
-    lang: VoiceLanguage
-  ): VoiceIntentResolution {
-    if (!clinicStore?.state) return intentRes;
-
-    if (intentRes.intent === "NAVIGATE_MEDICINES") {
-      const activeMeds = clinicStore.state.medicines.filter((m) => m.active);
-      if (activeMeds.length > 0) {
-        const medList = activeMeds
-          .map((m) => `${m.name} (${m.time})`)
-          .join(", ");
-        if (lang === "hi-IN") {
-          intentRes.spokenResponse = `आज आपकी ${activeMeds.length} दवाइयाँ हैं: ${medList}। मैं दवाइयों का पेज खोल रही हूँ।`;
-        } else if (lang === "kn-IN") {
-          intentRes.spokenResponse = `ಇಂದು ನಿಮಗೆ ${activeMeds.length} ಔಷಧಿಗಳಿವೆ: ${medList}. ಮಾತ್ರೆಗಳ ಪಟ್ಟಿಯನ್ನು ತೆರೆಯುತ್ತಿದ್ದೇನೆ.`;
-        } else if (lang === "ta-IN") {
-          intentRes.spokenResponse = `இன்று உங்களுக்கு ${activeMeds.length} மருந்துகள் உள்ளன: ${medList}.`;
-        } else if (lang === "te-IN") {
-          intentRes.spokenResponse = `ఈరోజు మీకు ${activeMeds.length} మందులు ఉన్నాయి: ${medList}.`;
-        } else {
-          intentRes.spokenResponse = `You have ${activeMeds.length} medicines scheduled today: ${medList}. Opening your medicines schedule.`;
-        }
-      }
-    } else if (intentRes.intent === "QUERY_NEXT_APPOINTMENT") {
-      const upcomingVisits = clinicStore.state.visits.filter(
-        (v) => !["Completed", "Cancelled"].includes(v.status)
-      );
-      if (upcomingVisits.length > 0) {
-        const nextV = upcomingVisits[0];
-        if (lang === "hi-IN") {
-          intentRes.spokenResponse = `आपकी अगली विज़िट ${nextV.date} को ${nextV.time} बजे है। अपॉइंटमेंट पेज खोल रही हूँ।`;
-        } else if (lang === "kn-IN") {
-          intentRes.spokenResponse = `ನಿಮ್ಮ ಮುಂದಿನ ಭೇಟಿ ${nextV.date} ರಂದು ${nextV.time} ಕ್ಕೆ ಇದೆ.`;
-        } else if (lang === "ta-IN") {
-          intentRes.spokenResponse = `உங்கள் அடுத்த சந்திப்பு ${nextV.date} அன்று ${nextV.time} மணிக்கு உள்ளது.`;
-        } else if (lang === "te-IN") {
-          intentRes.spokenResponse = `మీ తదుపరి అపాయింట్‌మెంట్ ${nextV.date}న ${nextV.time} గంటలకు ఉంది.`;
-        } else {
-          intentRes.spokenResponse = `Your next visit is for ${nextV.service} on ${nextV.date} at ${nextV.time}. Opening appointments.`;
-        }
-      }
-    }
-
-    return intentRes;
-  }
-
   async function handleSpokenTranscript(finalText: string) {
     if (!finalText.trim()) return;
 
@@ -179,23 +186,37 @@ export function VoiceModal({
     setStatus("processing");
 
     try {
-      let intentRes = deepgramCartesiaAdapter.resolveIntent(
+      // Evaluate against full patient universe (records, consultations, medicines, vitals, allergies)
+      const res = evaluatePatientKnowledge(
         finalText,
-        selectedLanguage
+        selectedLanguage,
+        clinicStore?.state,
+        history
       );
-      intentRes = enrichIntentWithClinicData(intentRes, selectedLanguage);
-      setResolution(intentRes);
+
+      setResolution(res);
+
+      // Save turn into conversational memory for multi-turn follow-ups
+      setHistory((prev) => [
+        ...prev,
+        {
+          user: finalText,
+          bloom: res.spokenResponse,
+          topic: res.category as any,
+          entityName: res.highlightData,
+        },
+      ]);
 
       setStatus("speaking");
 
-      // Play audio response using Cartesia Sonic
+      // Play ultra-fast, natural speech using Cartesia Sonic
       await deepgramCartesiaAdapter.synthesizeSpeech(
-        intentRes.spokenResponse,
+        res.spokenResponse,
         selectedLanguage
       );
 
       // Hands-Free Continuous Loop:
-      // The moment Bloom finishes speaking, seamlessly resume listening for next turn!
+      // When Bloom finishes speaking, seamlessly resume listening for next user turn!
       setStatus("listening");
       resetInactivityTimer();
     } catch {
@@ -218,12 +239,12 @@ export function VoiceModal({
     // Unlock browser audio context on user gesture
     if (typeof window !== "undefined") {
       try {
-        const AudioCtx =
+        const AudioCtxClass =
           window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          const dummyCtx = new AudioCtx();
-          if (dummyCtx.state === "suspended") {
-            dummyCtx.resume().catch(() => {});
+        if (AudioCtxClass) {
+          const testCtx = new AudioCtxClass();
+          if (testCtx.state === "suspended") {
+            await testCtx.resume();
           }
         }
       } catch {
@@ -240,14 +261,17 @@ export function VoiceModal({
           resetInactivityTimer();
         },
         onInterimTranscript: (interim) => {
-          // Real-time live words appearing on screen as the user speaks!
+          // Kinetic streaming: words flow live onto the screen as user speaks!
           setTranscript(interim);
         },
         onFinalTranscript: (finalText) => {
           handleSpokenTranscript(finalText);
         },
+        onVolumeChange: (vol) => {
+          setMicVolume(vol);
+        },
         onBargeIn: () => {
-          // User spoke while Bloom was speaking -> instantly cut off Bloom and listen!
+          // Real-time interruption: user spoke over Bloom -> instantly cut off audio and listen!
           setStatus("listening");
           setTranscript("");
           resetInactivityTimer();
@@ -267,21 +291,22 @@ export function VoiceModal({
 
   function handleMicPress() {
     if (status === "speaking") {
-      // User tapped while Bloom was speaking -> pause audio immediately
+      // User tapped while Bloom was speaking -> interrupt audio immediately
       deepgramCartesiaAdapter.stopSpeaking();
       setStatus("listening");
       return;
     }
 
     if (status === "listening" || status === "processing") {
-      // Tap to end session
       stopAll();
       return;
     }
 
-    // Start live WebSocket hands-free session
     startLiveSession();
   }
+
+  // Audio-reactive scale factor based on microphone volume (clamped between 1.0 and 1.25)
+  const volumeScale = Math.min(1.25, 1.0 + (micVolume / 100) * 0.4);
 
   return (
     <Modal
@@ -295,12 +320,31 @@ export function VoiceModal({
     >
       <View style={localStyles.overlay}>
         <View style={localStyles.container}>
-          {/* Top Bar: Minimal Gemini-Style Brand & Close */}
+          {/* Top Bar: Minimal Gemini-Style Header */}
           <View style={localStyles.header}>
             <View style={localStyles.brandRow}>
-              <View style={localStyles.statusDot} />
-              <Text style={localStyles.brandText}>Bloom</Text>
+              <View
+                style={[
+                  localStyles.statusDot,
+                  status === "listening" && { backgroundColor: "#10B981" },
+                  status === "processing" && { backgroundColor: "#818CF8" },
+                  status === "speaking" && { backgroundColor: "#06B6D4" },
+                ]}
+              />
+              <Text style={localStyles.brandTitle}>Bloom AI</Text>
+
+              {/* Status Pill */}
+              <View style={localStyles.statusPill}>
+                <Text style={localStyles.statusPillText}>
+                  {status === "idle" && "Ready"}
+                  {status === "listening" && "Listening..."}
+                  {status === "processing" && "Thinking..."}
+                  {status === "speaking" && "Speaking..."}
+                  {status === "error" && "Notice"}
+                </Text>
+              </View>
             </View>
+
             <Touch
               onPress={() => {
                 stopAll();
@@ -308,125 +352,180 @@ export function VoiceModal({
               }}
               label="Close"
             >
-              <Icon name="close" color={theme.muted} size={24} />
+              <View style={localStyles.closeCircle}>
+                <Icon name="close" color="#94A3B8" size={20} />
+              </View>
             </Touch>
           </View>
 
           {/* Minimal Language Pill Selector */}
           <View style={localStyles.langStrip}>
-            {SUPPORTED_VOICE_LANGUAGES.map((lang) => (
-              <Chip
-                key={lang.code}
-                title={lang.nativeLabel}
-                active={selectedLanguage === lang.code}
-                onPress={() => {
-                  stopAll();
-                  setSelectedLanguage(lang.code);
-                }}
-              />
-            ))}
+            {SUPPORTED_VOICE_LANGUAGES.map((lang) => {
+              const active = selectedLanguage === lang.code;
+              return (
+                <Touch
+                  key={lang.code}
+                  onPress={() => {
+                    stopAll();
+                    setSelectedLanguage(lang.code);
+                  }}
+                  style={
+                    active
+                      ? [localStyles.langChip, localStyles.langChipActive]
+                      : localStyles.langChip
+                  }
+                >
+                  <Text
+                    style={[
+                      localStyles.langChipText,
+                      active && localStyles.langChipTextActive,
+                    ]}
+                  >
+                    {lang.nativeLabel}
+                  </Text>
+                </Touch>
+              );
+            })}
           </View>
 
-          {/* Center Visualizer: Gemini-Style Glowing Orb */}
+          {/* Center Visualizer: Gemini Live Glowing Reactive Orb */}
           <View style={localStyles.visualizerBox}>
+            {/* Outer soundwave aura ring */}
             <Animated.View
               style={[
-                localStyles.pulseRing,
+                localStyles.waveRingOuter,
+                {
+                  transform: [
+                    { scale: waveAnim1 },
+                    { scale: volumeScale },
+                  ],
+                  opacity: status === "listening" ? 0.35 : 0.15,
+                  borderColor:
+                    status === "speaking"
+                      ? "#06B6D4"
+                      : status === "processing"
+                      ? "#818CF8"
+                      : "#10B981",
+                },
+              ]}
+            />
+
+            {/* Mid shimmer ring */}
+            <Animated.View
+              style={[
+                localStyles.waveRingMid,
+                {
+                  transform: [{ scale: waveAnim2 }],
+                  opacity: status === "listening" ? 0.45 : 0.2,
+                  borderColor:
+                    status === "speaking"
+                      ? "#38BDF8"
+                      : status === "processing"
+                      ? "#A78BFA"
+                      : "#34D399",
+                },
+              ]}
+            />
+
+            {/* Core Neural Interactive Mic Orb */}
+            <Animated.View
+              style={[
+                localStyles.coreOrb,
                 {
                   transform: [{ scale: pulseAnim }],
                   backgroundColor:
-                    status === "listening"
-                      ? "rgba(20, 125, 104, 0.15)"
-                      : status === "speaking"
-                      ? "rgba(85, 126, 185, 0.15)"
-                      : "transparent",
+                    status === "speaking"
+                      ? "#0891B2"
+                      : status === "processing"
+                      ? "#6366F1"
+                      : "#059669",
+                  shadowColor:
+                    status === "speaking"
+                      ? "#06B6D4"
+                      : status === "processing"
+                      ? "#818CF8"
+                      : "#10B981",
                 },
               ]}
             >
               <Touch
                 onPress={handleMicPress}
-                style={{
-                  ...localStyles.micButton,
-                  ...(status === "listening"
-                    ? { backgroundColor: theme.green }
-                    : status === "speaking"
-                    ? { backgroundColor: "#557EB9" }
-                    : {}),
-                }}
-                label="Voice Orb"
+                style={localStyles.micTouch}
+                label="Microphone"
               >
                 <Icon
-                  name={
-                    status === "speaking"
-                      ? "volume-high"
-                      : status === "processing"
-                      ? "ellipsis-horizontal"
-                      : status === "listening"
-                      ? "mic"
-                      : "mic-outline"
-                  }
-                  color="white"
+                  name={status === "speaking" ? "volume-high" : "mic"}
+                  color="#FFFFFF"
                   size={36}
                 />
               </Touch>
             </Animated.View>
 
-            {/* Clean Status */}
-            <Text style={localStyles.statusText}>
-              {status === "idle" &&
-                (selectedLanguage === "hi-IN"
-                  ? "बात करने के लिए टैप करें"
-                  : selectedLanguage === "kn-IN"
-                  ? "ಮಾತನಾಡಲು ಒತ್ತಿ"
-                  : selectedLanguage === "ta-IN"
-                  ? "பேச தட்டவும்"
-                  : selectedLanguage === "te-IN"
-                  ? "మాట్లాడటానికి నొక్కండి"
-                  : "Tap to speak")}
-              {status === "listening" &&
-                (selectedLanguage === "hi-IN"
-                  ? "सुन रही हूँ..."
-                  : selectedLanguage === "kn-IN"
-                  ? "ಆಲಿಸುತ್ತಿದೆ..."
-                  : selectedLanguage === "ta-IN"
-                  ? "கேட்கிறது..."
-                  : selectedLanguage === "te-IN"
-                  ? "వింటున్నాను..."
-                  : "Listening...")}
-              {status === "processing" && "..."}
-              {status === "speaking" &&
-                (selectedLanguage === "hi-IN"
-                  ? "बोल रही हूँ..."
-                  : selectedLanguage === "kn-IN"
-                  ? "ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ..."
-                  : "Speaking...")}
+            <Text style={localStyles.promptText}>
+              {status === "idle" && "Tap to start conversation"}
+              {status === "listening" && "Listening to you..."}
+              {status === "processing" && "Processing with Bloom..."}
+              {status === "speaking" && "Bloom is replying..."}
               {status === "error" && errorMsg}
             </Text>
           </View>
 
-          {/* Floating Transcript Area */}
+          {/* Kinetic Live Streaming Transcript Bubble */}
           {transcript !== "" && (
             <View style={localStyles.transcriptBubble}>
+              <Text style={localStyles.transcriptLabel}>You</Text>
               <Text style={localStyles.transcriptText}>
                 &ldquo;{transcript}&rdquo;
               </Text>
             </View>
           )}
 
-          {/* Floating Spoken Response & Action Button */}
+          {/* Spoken Response & Unified Patient Knowledge Card */}
           {resolution && (
-            <View style={localStyles.responseCard}>
+            <View
+              style={[
+                localStyles.responseCard,
+                resolution.isEmergencyAlert && localStyles.emergencyCard,
+              ]}
+            >
+              <View style={localStyles.responseHeaderRow}>
+                <Text
+                  style={[
+                    localStyles.responseLabel,
+                    resolution.isEmergencyAlert && { color: "#FCA5A5" },
+                  ]}
+                >
+                  Bloom AI
+                </Text>
+                {resolution.highlightData && (
+                  <View
+                    style={[
+                      localStyles.badgePill,
+                      resolution.isEmergencyAlert && {
+                        backgroundColor: "#7F1D1D",
+                      },
+                    ]}
+                  >
+                    <Text style={localStyles.badgePillText}>
+                      {resolution.highlightData}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
               <Text style={localStyles.responseText}>
                 {resolution.spokenResponse}
               </Text>
 
               {resolution.targetRoute && (
-                <View style={{ marginTop: 12 }}>
+                <View style={{ marginTop: 14 }}>
                   <Button
-                    title={`Open ${resolution.targetRoute.replace(
-                      /[\/()]/g,
-                      ""
-                    )} →`}
+                    title={
+                      resolution.isEmergencyAlert
+                        ? "Open Emergency SOS Support →"
+                        : `Open ${resolution.targetRoute.replace(/[\/()]/g, "")} →`
+                    }
+                    danger={resolution.isEmergencyAlert}
                     onPress={() => handleNavigate(resolution.targetRoute!)}
                   />
                 </View>
@@ -434,10 +533,10 @@ export function VoiceModal({
             </View>
           )}
 
-          {/* Subtle Hands-free Indicator */}
+          {/* Subtle Hands-Free Session Footer */}
           {status === "listening" && (
-            <Text style={localStyles.handsFreeHint}>
-              Hands-free continuous session · Say &ldquo;Stop&rdquo; or pause to exit
+            <Text style={localStyles.handsFreeFooter}>
+              Continuous hands-free conversation · Say &ldquo;Stop&rdquo; or pause to exit
             </Text>
           )}
         </View>
@@ -449,111 +548,206 @@ export function VoiceModal({
 const localStyles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    backgroundColor: "rgba(2, 6, 23, 0.72)",
     justifyContent: "flex-end",
   },
   container: {
-    backgroundColor: "white",
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
+    backgroundColor: "#080D1A",
+    borderTopLeftRadius: 36,
+    borderTopRightRadius: 36,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
     paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 32,
-    maxHeight: "88%",
+    paddingTop: 22,
+    paddingBottom: 36,
+    maxHeight: "90%",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 18,
   },
   brandRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: theme.green,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: "#94A3B8",
   },
-  brandText: {
-    fontSize: 16,
+  brandTitle: {
+    fontSize: 17,
     fontWeight: "700",
-    color: theme.ink,
+    color: "#F8FAFC",
     letterSpacing: -0.3,
+  },
+  statusPill: {
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 12,
+  },
+  statusPillText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#CBD5E1",
+  },
+  closeCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   langStrip: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-    marginBottom: 24,
+    marginBottom: 20,
+  },
+  langChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  langChipActive: {
+    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    borderColor: "#10B981",
+  },
+  langChipText: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#94A3B8",
+  },
+  langChipTextActive: {
+    color: "#34D399",
+    fontWeight: "700",
   },
   visualizerBox: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 18,
+    paddingVertical: 22,
+    position: "relative",
   },
-  pulseRing: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+  waveRingOuter: {
+    position: "absolute",
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    borderWidth: 2,
+  },
+  waveRingMid: {
+    position: "absolute",
+    width: 128,
+    height: 128,
+    borderRadius: 64,
+    borderWidth: 2,
+  },
+  coreOrb: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 16,
+  },
+  micTouch: {
+    width: 86,
+    height: 86,
+    borderRadius: 43,
     alignItems: "center",
     justifyContent: "center",
   },
-  micButton: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: theme.green,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-  },
-  statusText: {
-    marginTop: 14,
-    fontSize: 15,
-    fontWeight: "600",
-    color: theme.muted,
+  promptText: {
+    marginTop: 18,
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#94A3B8",
     textAlign: "center",
   },
   transcriptBubble: {
-    backgroundColor: "#F4F7F6",
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderRadius: 16,
+    borderRadius: 18,
     marginVertical: 8,
     alignSelf: "center",
-    maxWidth: "92%",
+    maxWidth: "94%",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+  },
+  transcriptLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748B",
+    marginBottom: 2,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   transcriptText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: theme.ink,
-    textAlign: "center",
+    fontSize: 15,
+    fontWeight: "500",
+    color: "#E2E8F0",
+    lineHeight: 22,
   },
   responseCard: {
-    backgroundColor: theme.mint,
-    padding: 16,
-    borderRadius: 18,
-    marginTop: 8,
-    borderColor: "#CDEFE5",
+    backgroundColor: "rgba(16, 185, 129, 0.08)",
+    padding: 18,
+    borderRadius: 20,
+    marginTop: 10,
     borderWidth: 1,
+    borderColor: "rgba(16, 185, 129, 0.25)",
+  },
+  emergencyCard: {
+    backgroundColor: "rgba(239, 68, 68, 0.12)",
+    borderColor: "rgba(239, 68, 68, 0.35)",
+  },
+  responseHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  responseLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#34D399",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  badgePill: {
+    backgroundColor: "rgba(16, 185, 129, 0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  badgePillText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#A7F3D0",
   },
   responseText: {
     fontSize: 15,
-    color: theme.ink,
-    lineHeight: 22,
+    color: "#F1F5F9",
+    lineHeight: 23,
     fontWeight: "500",
   },
-  handsFreeHint: {
+  handsFreeFooter: {
     fontSize: 12,
-    color: theme.muted,
+    color: "#64748B",
     textAlign: "center",
     marginTop: 16,
+    fontWeight: "500",
   },
 });
