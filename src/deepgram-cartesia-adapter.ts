@@ -331,9 +331,12 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
 
   /**
    * Stop live WebSocket streaming and release all microphone hardware
+   * @param keepSpeaking If true, allows ongoing TTS speech audio playback to continue playing during screen transitions
    */
-  stopLiveWebSocketSession(): void {
-    this.stopSpeaking();
+  stopLiveWebSocketSession(keepSpeaking = false): void {
+    if (!keepSpeaking) {
+      this.stopSpeaking();
+    }
 
     if (this.vadInterval) {
       clearInterval(this.vadInterval);

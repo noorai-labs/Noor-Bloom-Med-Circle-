@@ -183,11 +183,11 @@ export function evaluatePatientKnowledge(
         .map((r) => `${r.name} (${r.category})`)
         .join(", ");
 
-      let spoken = `You have ${records.length} health documents in your folder, including ${recordSummary}. Opening your records now.`;
+      let spoken = `Here are your health records. You have ${records.length} documents in your folder, including ${recordSummary}.`;
       if (language === "hi-IN") {
-        spoken = `आपके रिकॉर्ड्स में ${records.length} दस्तावेज़ हैं, जिनमें ${recordSummary} शामिल हैं। रिकॉर्ड्स खोले जा रहे हैं।`;
+        spoken = `यहाँ आपके स्वास्थ्य रिकॉर्ड्स हैं। आपके फ़ोल्डर में ${records.length} दस्तावेज़ हैं, जिनमें ${recordSummary} शामिल हैं।`;
       } else if (language === "kn-IN") {
-        spoken = `ನಿಮ್ಮ ಫೋಲ್ಡರ್‌ನಲ್ಲಿ ${records.length} ಆರೋಗ್ಯ ದಾಖಲೆಗಳಿವೆ: ${recordSummary}. ದಾಖಲೆಗಳನ್ನು ತೆರೆಯುತ್ತಿದ್ದೇನೆ.`;
+        spoken = `ಇಲ್ಲಿ ನಿಮ್ಮ ಆರೋಗ್ಯ ದಾಖಲೆಗಳಿವೆ. ನಿಮ್ಮ ಫೋಲ್ಡರ್‌ನಲ್ಲಿ ${records.length} ದಾಖಲೆಗಳಿವೆ: ${recordSummary}.`;
       } else if (language === "ta-IN") {
         spoken = `உங்கள் கோப்பில் ${records.length} மருத்துவ அறிக்கைகள் உள்ளன.`;
       } else if (language === "te-IN") {
@@ -271,11 +271,11 @@ export function evaluatePatientKnowledge(
   if (matchedMed) {
     const isTaken = matchedMed.logs && Object.values(matchedMed.logs).includes("Taken");
     const statusNote = isTaken ? "Marked as taken today." : "Scheduled for today.";
-    let spoken = `${matchedMed.name} (${matchedMed.dosage}) is scheduled for ${matchedMed.time}. ${statusNote} Opening your medicines schedule.`;
+    let spoken = `Here is your medicine details. ${matchedMed.name} (${matchedMed.dosage}) is scheduled for ${matchedMed.time}. ${statusNote}`;
     if (language === "hi-IN") {
-      spoken = `${matchedMed.name} (${matchedMed.dosage}) का समय ${matchedMed.time} है। ${isTaken ? "आज ली जा चुकी है।" : "आज लेना बाकी है।"}`;
+      spoken = `यहाँ आपकी दवा का विवरण है। ${matchedMed.name} (${matchedMed.dosage}) का समय ${matchedMed.time} है। ${isTaken ? "आज ली जा चुकी है।" : "आज लेना बाकी है।"}`;
     } else if (language === "kn-IN") {
-      spoken = `${matchedMed.name} (${matchedMed.dosage}) ಮಾತ್ರೆ ಸಮಯ ${matchedMed.time}. ${isTaken ? "ಇಂದು ತೆಗೆದುಕೊಳ್ಳಲಾಗಿದೆ." : "ಇಂದು ತೆಗೆದುಕೊಳ್ಳಬೇಕು."}`;
+      spoken = `ಇಲ್ಲಿ ನಿಮ್ಮ ಔಷಧಿಯ ವಿವರವಿದೆ. ${matchedMed.name} (${matchedMed.dosage}) ಮಾತ್ರೆ ಸಮಯ ${matchedMed.time}. ${isTaken ? "ಇಂದು ತೆಗೆದುಕೊಳ್ಳಲಾಗಿದೆ." : "ಇಂದು ತೆಗೆದುಕೊಳ್ಳಬೇಕು."}`;
     }
     return {
       intent: "NAVIGATE_MEDICINES",
@@ -304,11 +304,11 @@ export function evaluatePatientKnowledge(
     const activeMeds = allMeds.filter((m) => m.active);
     if (activeMeds.length > 0) {
       const medList = activeMeds.map((m) => `${m.name} at ${m.time}`).join(", ");
-      let spoken = `You have ${activeMeds.length} active medicines: ${medList}. Opening your medication plan.`;
+      let spoken = `Here is your medication schedule. You have ${activeMeds.length} active medicines: ${medList}.`;
       if (language === "hi-IN") {
-        spoken = `आज आपकी ${activeMeds.length} दवाइयाँ हैं: ${medList}। दवाइयों का शेड्यूल खोला जा रहा है।`;
+        spoken = `यहाँ आपकी दवाइयों का शेड्यूल है। आज आपकी ${activeMeds.length} दवाइयाँ हैं: ${medList}।`;
       } else if (language === "kn-IN") {
-        spoken = `ಇಂದು ನಿಮಗೆ ${activeMeds.length} ಔಷಧಿಗಳಿವೆ: ${medList}. ಔಷಧಿ ಪಟ್ಟಿಯನ್ನು ತೆರೆಯುತ್ತಿದ್ದೇನೆ.`;
+        spoken = `ಇಲ್ಲಿ ನಿಮ್ಮ ಔಷಧಿಗಳ ವೇಳಾಪಟ್ಟಿಯಿದೆ. ಇಂದು ನಿಮಗೆ ${activeMeds.length} ಔಷಧಿಗಳಿವೆ: ${medList}.`;
       } else if (language === "ta-IN") {
         spoken = `இன்று உங்களுக்கு ${activeMeds.length} மருந்துகள் உள்ளன: ${medList}.`;
       } else if (language === "te-IN") {
@@ -343,11 +343,11 @@ export function evaluatePatientKnowledge(
     if (upcoming.length > 0) {
       const nextV = upcoming[0];
       const dateStr = formatDate(nextV.date);
-      let spoken = `Your next appointment for ${nextV.service} is on ${dateStr} at ${nextV.time}. Status is ${nextV.status.toLowerCase()}. Opening appointments.`;
+      let spoken = `Here is your care schedule. Your next appointment for ${nextV.service} is on ${dateStr} at ${nextV.time}. Status is ${nextV.status.toLowerCase()}.`;
       if (language === "hi-IN") {
-        spoken = `आपकी अगली मुलाकात ${nextV.service} के लिए ${dateStr} को ${nextV.time} बजे है। अपॉइंटमेंट पेज खोला जा रहा है।`;
+        spoken = `यहाँ आपकी देखभाल का शेड्यूल है। आपकी अगली मुलाकात ${nextV.service} के लिए ${dateStr} को ${nextV.time} बजे है।`;
       } else if (language === "kn-IN") {
-        spoken = `ನಿಮ್ಮ ಮುಂದಿನ ಭೇಟಿ ${nextV.service} ಗಾಗಿ ${dateStr} ರಂದು ${nextV.time} ಕ್ಕೆ ಇದೆ.`;
+        spoken = `ಇಲ್ಲಿ ನಿಮ್ಮ ಭೇಟಿಗಳ ವಿವರವಿದೆ. ನಿಮ್ಮ ಮುಂದಿನ ಭೇಟಿ ${nextV.service} ಗಾಗಿ ${dateStr} ರಂದು ${nextV.time} ಕ್ಕೆ ಇದೆ.`;
       }
       return {
         intent: "QUERY_NEXT_APPOINTMENT",
@@ -372,13 +372,13 @@ export function evaluatePatientKnowledge(
     t.includes("ಬುಕ್")
   ) {
     let spoken =
-      "I can help you discover available doctors and nurses for clinic or home care. Opening provider discovery.";
+      "Here is the care directory. You can discover available doctors and nurses for clinic or home care.";
     if (language === "hi-IN") {
       spoken =
-        "मैं आपको डॉक्टर या नर्स की होम विजिट बुक करने में मदद कर सकती हूँ। प्रोवाइडर खोज पेज खोला जा रहा है।";
+        "यहाँ केयर डायरेक्टरी है। आप क्लिनिक या होम विज़िट के लिए उपलब्ध डॉक्टर और नर्स देख सकते हैं।";
     } else if (language === "kn-IN") {
       spoken =
-        "ನಾನು ವೈದ್ಯರು ಅಥವಾ ನರ್ಸ್ ಬುಕಿಂಗ್ ಮಾಡಲು ಸಹಾಯ ಮಾಡಬಲ್ಲೆ. ಲಭ್ಯವಿರುವ ಸೇವೆಗಳನ್ನು ತೆರೆಯುತ್ತಿದ್ದೇನೆ.";
+        "ಇಲ್ಲಿ ಆರೋಗ್ಯ ಸೇವಾ ಪಟ್ಟಿಯಿದೆ. ನೀವು ಲಭ್ಯವಿರುವ ವೈದ್ಯರು ಮತ್ತು ನರ್ಸ್‌ಗಳನ್ನು ಆಯ್ಕೆ ಮಾಡಬಹುದು.";
     }
     return {
       intent: "NAVIGATE_BOOKING",

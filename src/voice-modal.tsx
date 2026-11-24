@@ -209,14 +209,39 @@ export function VoiceModal({
 
       setStatus("speaking");
 
-      // Play ultra-fast, natural speech using Cartesia Sonic
+      // Check if this intent triggers auto-navigation to a specific page
+      if (res.targetRoute) {
+        // 1. Start speaking the on-screen readout via Cartesia Sonic
+        const speechPromise = deepgramCartesiaAdapter.synthesizeSpeech(
+          res.spokenResponse,
+          selectedLanguage
+        );
+
+        // 2. Automatically navigate to the destination page after a smooth delay (300ms)
+        // so the patient sees the screen appear while Bloom reads out its contents!
+        setTimeout(() => {
+          deepgramCartesiaAdapter.stopLiveWebSocketSession(true);
+          if (inactivityTimerRef.current) {
+            clearTimeout(inactivityTimerRef.current);
+            inactivityTimerRef.current = null;
+          }
+          setStatus("idle");
+          onClose();
+          router.push(res.targetRoute as any);
+        }, 300);
+
+        await speechPromise;
+        return;
+      }
+
+      // Conversational queries (no target route) stay in the modal:
       await deepgramCartesiaAdapter.synthesizeSpeech(
         res.spokenResponse,
         selectedLanguage
       );
 
       // Hands-Free Continuous Loop:
-      // When Bloom finishes speaking, seamlessly resume listening for next user turn!
+      // When Bloom finishes speaking inside the modal, seamlessly resume listening for next user turn!
       setStatus("listening");
       resetInactivityTimer();
     } catch {
