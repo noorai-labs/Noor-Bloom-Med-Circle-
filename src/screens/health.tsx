@@ -218,10 +218,10 @@ export function RecordsScreen() {
             <Body>{n.text}</Body>
             <Label>PRESCRIPTION / INSTRUCTIONS</Label>
             <Body>{n.prescription || "None entered"}</Body>
-            {n.followUp && (
+            {!!n.followUp && (
               <Chip title={"Follow-up · " + formatDate(n.followUp)} />
             )}
-            {n.visitId && (
+            {!!n.visitId && (
               <Button
                 title="Open visit & follow-up"
                 secondary
