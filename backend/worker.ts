@@ -23,6 +23,7 @@ import {
   maintainCalls,
   type CallEnv,
 } from "./calls";
+import { providerRoute, ProviderError } from "./providers";
 export { MedicineReminderScheduler } from "./reminders";
 
 type Env = ReminderEnv &
@@ -267,6 +268,11 @@ async function route(
     }
     return response;
   }
+  if (
+    url.pathname === "/v1/providers" ||
+    url.pathname.startsWith("/v1/providers/")
+  )
+    return providerRoute(request, env, user);
   if (
     url.pathname === "/v1/reminders/revoke-session" &&
     request.method === "POST"
@@ -1075,7 +1081,8 @@ export default {
       if (
         !(e instanceof HttpError) &&
         !(e instanceof VerificationError) &&
-        !(e instanceof CallError)
+        !(e instanceof CallError) &&
+        !(e instanceof ProviderError)
       )
         console.error("Unexpected Worker operation failure");
       response = Response.json(
@@ -1083,7 +1090,8 @@ export default {
           error:
             e instanceof HttpError ||
             e instanceof VerificationError ||
-            e instanceof CallError
+            e instanceof CallError ||
+            e instanceof ProviderError
               ? e.message
               : "Unable to complete the cloud request.",
         },
@@ -1091,7 +1099,8 @@ export default {
           status:
             e instanceof HttpError ||
             e instanceof VerificationError ||
-            e instanceof CallError
+            e instanceof CallError ||
+            e instanceof ProviderError
               ? e.status
               : 500,
         },

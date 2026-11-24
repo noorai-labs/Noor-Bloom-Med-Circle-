@@ -29,6 +29,8 @@ if credentials.exists():
 else:
     values={'LIVEKIT_API_KEY':'bloom_'+secrets.token_hex(12),'LIVEKIT_API_SECRET':secrets.token_hex(32)}
 values['LIVEKIT_URL']='wss://'+args.domain
+# lgtm [py/clear-text-storage-sensitive-data] The root-only 0600 file is the
+# local Docker secret store required by the self-hosted LiveKit deployment.
 credentials.write_text(json.dumps(values))
 os.chmod(credentials,0o600)
 def image_digest(image):

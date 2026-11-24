@@ -25,7 +25,7 @@ export default function DoctorEntry() {
         .then((value) => {
           if (active) setVerification(value);
         })
-        .catch(() => {});
+        .catch(() => { });
     return () => {
       active = false;
     };

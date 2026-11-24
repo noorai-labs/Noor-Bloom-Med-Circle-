@@ -229,12 +229,17 @@ export function ProfileScreen() {
           if (cloud) {
             void cloud
               .signOut()
+              .then(() => {
+                dispatch({ type: "session", session: null });
+                router.replace("/sign-in");
+              })
               .catch(() =>
                 notify("Sign-out could not complete. Please try again."),
               );
             return;
           }
           dispatch({ type: "session", session: null });
+          router.replace("/sign-in");
         }}
       />
     </Screen>
@@ -325,9 +330,11 @@ export function InboxScreen() {
       ))}
       {!items.length && (
         <Empty
-          title="All quiet for now"
-          body="Bookings, care plans and support updates will appear here."
+          title="No activity updates yet"
+          body="Appointment confirmations, medicine reminders, and care notes will appear here."
           icon="notifications-outline"
+          action={["Patient", "Family"].includes(state.session?.role || "") ? "Find care" : undefined}
+          onPress={["Patient", "Family"].includes(state.session?.role || "") ? () => router.push("/discover") : undefined}
         />
       )}
     </Screen>
@@ -374,8 +381,8 @@ export function SupportScreen() {
       ))}
       {!state.issues.length && (
         <Empty
-          title="Nothing to follow up"
-          body="Your local support requests will appear here."
+          title="No open support requests"
+          body="Need help with appointments or records? Describe an issue above. Requests are saved locally; no message is sent to an external team."
           icon="chatbubble-outline"
         />
       )}

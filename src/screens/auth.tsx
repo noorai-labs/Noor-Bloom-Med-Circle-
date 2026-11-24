@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import {
-  Image,
   Keyboard,
   Modal,
   ScrollView,
@@ -10,11 +9,18 @@ import {
 } from "react-native";
 import { Redirect, router } from "expo-router";
 import { AuthLayout } from "../auth-layout";
+import {
+  AUTH_ROLE_DETAILS,
+  AuthBrandHeader,
+  AuthFooter,
+  AuthSignInShell,
+  PortalRoleGrid,
+  RoleChooserModal,
+} from "../auth-chrome";
 import { useClinic } from "../store";
-import { BloomLogo } from "../branding";
 import { cloudMode } from "../cloud-config";
 import { GoogleLogin } from "./google-login";
-import { brand, doctors, nurses, Role, roles } from "../clinic";
+import { doctors, nurses, Role } from "../clinic";
 import {
   Avatar,
   Body,
@@ -23,15 +29,141 @@ import {
   Chips,
   Field,
   Entrance,
+  ErrorBanner,
   Icon,
   Label,
+  OtpInput,
   Screen,
+  SlideDownFade,
   Touch,
   styles,
   theme,
-  useKeyboardOpen,
 } from "../components";
 import { WelcomeGate } from "../welcome";
+
+export function StaffProfileSelector({
+  kind,
+  providerId,
+  onSelect,
+}: {
+  kind: "Doctor" | "Nurse";
+  providerId: string;
+  onSelect: (id: string) => void;
+}) {
+  const list = kind === "Nurse" ? nurses : doctors;
+  const fallbackId = kind === "Nurse" ? "n1" : "1";
+  return (
+    <SlideDownFade>
+      <View
+        style={{
+          marginLeft: 14,
+          paddingLeft: 12,
+          borderLeftWidth: 2.5,
+          borderLeftColor: theme.green,
+          gap: 8,
+          marginTop: 2,
+          marginBottom: 4,
+        }}
+      >
+        <View style={{ gap: 2 }}>
+          <Text
+            style={{
+              fontWeight: "700",
+              fontSize: 13,
+              color: theme.ink,
+            }}
+          >
+            {kind === "Doctor" ? "Choose Doctor Profile" : "Choose Nurse Profile"}
+          </Text>
+          <Text style={{ fontSize: 11, color: theme.muted }}>
+            {kind === "Doctor"
+              ? "Visits and consultations are scoped to this physician."
+              : "Home visit queues are scoped to this nurse."}
+          </Text>
+        </View>
+        <View style={{ gap: 6 }}>
+          {list.map((p) => {
+            const selected = p.id === (providerId || fallbackId);
+            return (
+              <Touch
+                key={p.id}
+                label={"Select " + p.name}
+                selected={selected}
+                onPress={() => onSelect(p.id)}
+                style={{
+                  padding: 10,
+                  borderRadius: 12,
+                  backgroundColor: selected ? "#E5F5EF" : "#FFFFFF",
+                  borderWidth: 1.5,
+                  borderColor: selected ? theme.green : "#E4EDE8",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <Avatar providerId={p.id} size={36} />
+                <View style={{ flex: 1 }}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontWeight: "700",
+                        fontSize: 13,
+                        color: selected ? theme.green : theme.ink,
+                      }}
+                    >
+                      {p.name}
+                    </Text>
+                    <View
+                      style={{
+                        backgroundColor: "#F0F4F2",
+                        paddingHorizontal: 5,
+                        paddingVertical: 1,
+                        borderRadius: 5,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 10,
+                          color: theme.muted,
+                          fontWeight: "600",
+                        }}
+                      >
+                        ★ {p.rating}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: theme.muted,
+                      marginTop: 1,
+                    }}
+                  >
+                    {p.specialty} · {p.experience} yrs exp
+                  </Text>
+                </View>
+                {selected && (
+                  <Icon
+                    name="checkmark-circle"
+                    size={18}
+                    color={theme.green}
+                  />
+                )}
+              </Touch>
+            );
+          })}
+        </View>
+      </View>
+    </SlideDownFade>
+  );
+}
+
 export default function AuthScreen() {
   return (
     <WelcomeGate>
@@ -39,20 +171,68 @@ export default function AuthScreen() {
     </WelcomeGate>
   );
 }
+
 function DemoAuthScreen() {
   const { state, dispatch } = useClinic();
-  const [step, setStep] = useState<"login" | "otp">("login");
+  const [step, setStep] = useState<"options" | "email" | "otp">("options");
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const [role, setRole] = useState<Role>("Patient");
   const [identifier, setIdentifier] = useState("");
   const [code, setCode] = useState("");
   const [providerId, setProviderId] = useState("1");
   const [error, setError] = useState("");
   const [choosing, setChoosing] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const { height } = useWindowDimensions();
 
-  const keyboardOpen = useKeyboardOpen();
+  function selectRole(next: Role) {
+    setRole(next);
+    if (next === "Nurse") setProviderId("n1");
+    else if (next === "Doctor") setProviderId(doctors[0]?.id || "1");
+    setError("");
+  }
+
+  function continueWithGoogle() {
+    setError("");
+    Keyboard.dismiss();
+    dispatch({
+      type: "session",
+      session: {
+        role,
+        providerId: ["Doctor", "Nurse"].includes(role) ? providerId : "",
+        identifier: identifier.trim() || AUTH_ROLE_DETAILS[role].defaultEmail,
+      },
+    });
+  }
+
+  function handleLoginSubmit(targetCode: string) {
+    if (targetCode !== "123456") {
+      setError("Enter demo code 123456.");
+      return;
+    }
+    setError("");
+    Keyboard.dismiss();
+    const finalIdentifier =
+      identifier.trim() || AUTH_ROLE_DETAILS[role].defaultEmail;
+    dispatch({
+      type: "session",
+      session: {
+        role,
+        providerId: ["Doctor", "Nurse"].includes(role) ? providerId : "",
+        identifier: finalIdentifier,
+      },
+    });
+  }
+
   function continueLogin() {
     const clean = identifier.trim();
+    if (!clean) {
+      setIdentifier(AUTH_ROLE_DETAILS[role].defaultEmail);
+      setError("");
+      Keyboard.dismiss();
+      setStep("otp");
+      return;
+    }
     if (!/^\S+@\S+\.\S+$/.test(clean) && !/^\+?\d[\d\s-]{8,14}$/.test(clean)) {
       setError("Enter a valid email or mobile number.");
       return;
@@ -62,6 +242,7 @@ function DemoAuthScreen() {
     Keyboard.dismiss();
     setStep("otp");
   }
+
   if (state.session)
     return (
       <Redirect
@@ -72,202 +253,335 @@ function DemoAuthScreen() {
         }
       />
     );
-  const staff = role === "Nurse" ? nurses : doctors;
+
+  const details = AUTH_ROLE_DETAILS[role];
+
   return (
     <AuthLayout>
-      {!keyboardOpen && (
-        <View style={[styles.row, { marginVertical: 4 }]}>
-          <BloomLogo size={44} />
-          <Text
-            style={{
-              color: theme.ink,
-              fontSize: 18,
-              fontWeight: "800",
-              letterSpacing: 1.4,
-            }}
-          >
-            {brand.name}
-          </Text>
-        </View>
-      )}
-      {step === "login" && !keyboardOpen && height > 680 && (
-        <Image
-          source={require("../../assets/care-welcome.png")}
-          accessibilityLabel="A care professional supporting a loved one at home"
-          style={{
-            width: "100%",
-            height: Math.min(176, Math.max(0, height - 650)),
-            borderRadius: 24,
+      {step === "options" ? (
+        <AuthSignInShell
+          role={role}
+          height={height}
+          error={error}
+          onDismissError={() => setError("")}
+          onRoleChange={selectRole}
+          onOpenMoreRoles={() => setChoosing(true)}
+          googleTitle="Enter demo"
+          onGooglePress={continueWithGoogle}
+          onEmailPress={() => {
+            setCreatingAccount(false);
+            setError("");
+            setStep("email");
           }}
-          resizeMode="cover"
-        />
-      )}
-      {!keyboardOpen && height > 650 && (
-        <View style={{ gap: 6 }}>
-          <Text
-            style={{
-              fontSize: height < 700 ? 22 : 28,
-              lineHeight: 32,
-              color: theme.ink,
-              fontWeight: "800",
-            }}
-          >
-            Care that fits into your life.
-          </Text>
-          {height > 750 && <Body muted>Thoughtful care, right at home.</Body>}
-        </View>
-      )}
-      <Entrance key={step}>
-        <Card
-          style={{
-            borderRadius: 26,
-            padding: 16,
-            gap: keyboardOpen || height < 700 ? 8 : 12,
+          onCreateAccountPress={() => {
+            setCreatingAccount(true);
+            setError("");
+            setStep("email");
           }}
+          onHelpPress={() => setHelpOpen(true)}
+          footerNote="Local demo · Fictional data only"
         >
-          {!keyboardOpen && (
-            <Text style={[styles.title, { fontSize: 21, lineHeight: 26 }]}>
-              {step === "login"
-                ? "Your care starts here"
-                : "One small step to care"}
-            </Text>
+          {(role === "Doctor" || role === "Nurse") && (
+            <StaffProfileSelector
+              kind={role}
+              providerId={providerId}
+              onSelect={setProviderId}
+            />
           )}
-          {!keyboardOpen && (
-            <Body muted>
-              {step === "login"
-                ? "Choose a role to explore your local care space."
-                : "Use the demo code 123456. No SMS is sent."}
-            </Body>
-          )}
-          {step === "login" ? (
-            <>
+        </AuthSignInShell>
+      ) : (
+        <>
+          <AuthBrandHeader />
+          <Entrance key={step}>
+            <Card style={{ borderRadius: 24, padding: 20, gap: 16 }}>
+              <View style={{ gap: 6 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <Touch
+                    label="Go back"
+                    onPress={() => {
+                      setError("");
+                      setStep(step === "otp" ? "email" : "options");
+                    }}
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 17,
+                      backgroundColor: "#EEF4F1",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Icon name="arrow-back" size={18} color={theme.ink} />
+                  </Touch>
+                  <Text
+                    style={[
+                      styles.title,
+                      { fontSize: 20, lineHeight: 26, flexShrink: 1 },
+                    ]}
+                  >
+                    {step === "email"
+                      ? creatingAccount
+                        ? "Create your account"
+                        : "Continue with email"
+                      : "Verify your identity"}
+                  </Text>
+                </View>
+                <Body muted>
+                  {step === "email"
+                    ? `${creatingAccount ? (role !== "Patient" ? "Choose your role and enter" : "Join the demo with") : "Enter"} your email or mobile number. No email or SMS code will arrive. On the next screen, enter 123456 or use the demo autofill button.`
+                    : `Demo for ${identifier || "your account"}: no email or SMS code will arrive. Enter 123456 or use the demo autofill button.`}
+                </Body>
+              </View>
+
+              {!!error && (
+                <ErrorBanner
+                  message={error}
+                  onDismiss={() => setError("")}
+                />
+              )}
+
+              {step === "email" ? (
+                <>
+                  {creatingAccount && role !== "Patient" && (
+                    <PortalRoleGrid role={role} onSelect={selectRole} />
+                  )}
+
+                  {(role === "Doctor" || role === "Nurse") && (
+                    <StaffProfileSelector
+                      kind={role}
+                      providerId={providerId}
+                      onSelect={setProviderId}
+                    />
+                  )}
+                  <Field
+                    label={details.emailLabel}
+                    value={identifier}
+                    onChange={(value) => {
+                      setIdentifier(value);
+                      setError("");
+                    }}
+                    placeholder={details.defaultEmail}
+                    error={error}
+                    inputProps={{
+                      autoCapitalize: "none",
+                      autoCorrect: false,
+                      keyboardType: "email-address",
+                      autoComplete: "email",
+                      returnKeyType: "go",
+                      onSubmitEditing: continueLogin,
+                    }}
+                  />
+
+                  <Button
+                    title={
+                      creatingAccount
+                        ? `Create ${details.title} account`
+                        : `Continue as ${details.title}`
+                    }
+                    icon="arrow-forward"
+                    onPress={continueLogin}
+                  />
+                </>
+              ) : (
+                <>
+                  <View
+                    style={{
+                      padding: 12,
+                      backgroundColor: "#F4F8F6",
+                      borderRadius: 14,
+                      borderWidth: 1,
+                      borderColor: "#D8EAE0",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 18,
+                        backgroundColor: details.badgeColor,
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Icon
+                        name={details.icon}
+                        size={18}
+                        color={details.iconColor}
+                      />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={{
+                          fontSize: 10,
+                          color: theme.muted,
+                          textTransform: "uppercase",
+                          fontWeight: "700",
+                          letterSpacing: 0.5,
+                        }}
+                      >
+                        Signing in as {details.title}
+                      </Text>
+                      <Text
+                        style={{
+                          fontWeight: "700",
+                          fontSize: 13,
+                          color: theme.ink,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {identifier || details.defaultEmail}
+                      </Text>
+                    </View>
+                    <Touch
+                      label="Change role or account"
+                      onPress={() => {
+                        setError("");
+                        setStep("email");
+                      }}
+                      style={{
+                        backgroundColor: "white",
+                        paddingHorizontal: 8,
+                        paddingVertical: 5,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: "#D8EAE0",
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: "700",
+                          color: theme.green,
+                        }}
+                      >
+                        Change
+                      </Text>
+                    </Touch>
+                  </View>
+
+                  <View style={{ gap: 8 }}>
+                    <Label>6-digit verification code</Label>
+                    <OtpInput
+                      value={code}
+                      onChange={(value) => {
+                        setCode(value);
+                        setError("");
+                      }}
+                      onComplete={(val) => {
+                        handleLoginSubmit(val);
+                      }}
+                      error={error}
+                      autoFocus
+                    />
+                  </View>
+
+                  <Touch
+                    label="Auto-fill demo verification code"
+                    onPress={() => {
+                      setCode("123456");
+                      setError("");
+                      handleLoginSubmit("123456");
+                    }}
+                    style={{
+                      alignSelf: "flex-start",
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      backgroundColor: "#E5F5EF",
+                      borderRadius: 10,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <Icon name="key-outline" size={15} color={theme.green} />
+                    <Text
+                      style={{
+                        fontSize: 12,
+                        color: theme.green,
+                        fontWeight: "700",
+                      }}
+                    >
+                      Fill demo OTP (123456) & enter
+                    </Text>
+                  </Touch>
+
+                  <Button
+                    title={
+                      role === "Doctor"
+                        ? "Enter Doctor Portal"
+                        : role === "Nurse"
+                          ? "Enter Nurse Portal"
+                          : "Enter my care space"
+                    }
+                    icon="arrow-forward"
+                    disabled={code.length < 6}
+                    onPress={() => handleLoginSubmit(code)}
+                  />
+
+                  <Button
+                    title="Change login details"
+                    secondary
+                    onPress={() => {
+                      setError("");
+                      setStep("email");
+                    }}
+                  />
+                </>
+              )}
+            </Card>
+          </Entrance>
+
+          {step === "email" && (
+            <View style={{ alignItems: "center", gap: 4 }}>
               <Touch
-                label="Choose demo role"
-                onPress={() => setChoosing(true)}
-                style={{
-                  paddingVertical: 8,
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                label={
+                  creatingAccount
+                    ? "Sign in with an existing account"
+                    : "Create a BLOOM MED account"
+                }
+                onPress={() => {
+                  setCreatingAccount(!creatingAccount);
+                  setError("");
                 }}
+                style={{ paddingVertical: 8, paddingHorizontal: 14 }}
               >
-                <Text style={{ color: theme.green, fontWeight: "700" }}>
-                  {role}
-                  {["Doctor", "Nurse"].includes(role)
-                    ? " � " + staff.find((p) => p.id === providerId)?.name
-                    : " care space"}
+                <Text style={{ fontSize: 13, color: theme.muted }}>
+                  {creatingAccount
+                    ? "Already have an account? "
+                    : "New to BLOOM MED? "}
+                  <Text style={{ color: theme.green, fontWeight: "700" }}>
+                    {creatingAccount ? "Sign in" : "Create account"}
+                  </Text>
                 </Text>
-                <Icon name="chevron-down" size={18} />
               </Touch>
-              <Field
-                label="Email or mobile number"
-                value={identifier}
-                onChange={(value) => {
-                  setIdentifier(value);
-                  setError("");
-                }}
-                placeholder="you@example.com"
-                error={error}
-                inputProps={{
-                  autoCapitalize: "none",
-                  autoCorrect: false,
-                  keyboardType: "email-address",
-                  autoComplete: "email",
-                  returnKeyType: "go",
-                  onSubmitEditing: continueLogin,
-                }}
-              />
-              <Button
-                title="Continue"
-                icon="arrow-forward"
-                onPress={continueLogin}
-              />
-            </>
-          ) : (
-            <>
-              <Field
-                label="Verification code"
-                value={code}
-                onChange={(value) => {
-                  setCode(value.replace(/\D/g, "").slice(0, 6));
-                  setError("");
-                }}
-                placeholder="123456"
-                numeric
-                error={error}
-                inputProps={{
-                  maxLength: 6,
-                  autoComplete: "one-time-code",
-                  textContentType: "oneTimeCode",
-                  autoCorrect: false,
-                  autoCapitalize: "none",
-                }}
-              />
-              <Button
-                title="Enter my care space"
-                onPress={() => {
-                  if (code !== "123456")
-                    return setError("Enter demo code 123456.");
-                  if (
-                    dispatch({
-                      type: "session",
-                      session: {
-                        role,
-                        providerId: ["Doctor", "Nurse"].includes(role)
-                          ? providerId
-                          : "",
-                        identifier,
-                      },
-                    })
-                  ) {
-                    Keyboard.dismiss();
-                  }
-                }}
-              />
-              <Button
-                title="Change login details"
-                secondary
-                onPress={() => {
-                  setError("");
-                  setStep("login");
-                }}
-              />
-            </>
+            </View>
           )}
-        </Card>
-      </Entrance>
-      {!keyboardOpen && (
-        <View
-          style={{
-            gap: 8,
-            alignItems: "center",
-            paddingTop: 6,
-            paddingBottom: 0,
-          }}
-        >
-          <View
-            style={[styles.row, { justifyContent: "center", flexWrap: "wrap" }]}
-          >
-            <Icon name="shield-checkmark-outline" size={16} />
-            <Body muted>Local demo · Fictional data only</Body>
-          </View>
-          <Text
-            style={{
-              color: theme.muted,
-              textAlign: "center",
-              fontSize: 11,
-              lineHeight: 16,
-            }}
-          >
-            {brand.company} · Your care, connected.
-          </Text>
-        </View>
+
+          <AuthFooter note="Local demo · Fictional data only" />
+        </>
       )}
-      <Modal
+
+      <RoleChooserModal
         visible={choosing}
+        role={role}
+        onSelect={selectRole}
+        onClose={() => setChoosing(false)}
+      />
+
+      <Modal
+        visible={helpOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => setChoosing(false)}
+        onRequestClose={() => setHelpOpen(false)}
       >
         <View
           style={{
@@ -277,42 +591,35 @@ function DemoAuthScreen() {
             padding: 24,
           }}
         >
-          <Card style={{ maxHeight: "80%" }}>
-            <Text style={styles.cardTitle}>Choose your demo care space</Text>
+          <Card style={{ maxHeight: "85%", borderRadius: 24, padding: 20 }}>
             <ScrollView>
               <View style={{ gap: 14 }}>
-                <Chips
-                  values={roles}
-                  value={role}
-                  onChange={(v) => {
-                    setRole(v as Role);
-                    setProviderId(v === "Nurse" ? "n1" : "1");
-                  }}
-                />
-                {["Doctor", "Nurse"].includes(role) && (
-                  <>
-                    <Label>Care professional</Label>
-                    <Chips
-                      values={staff.map((p) => p.name)}
-                      value={
-                        staff.find((p) => p.id === providerId)?.name ||
-                        staff[0].name
-                      }
-                      onChange={(name) =>
-                        setProviderId(staff.find((p) => p.name === name)!.id)
-                      }
-                    />
-                  </>
-                )}
+                <Text style={[styles.title, { fontSize: 19, lineHeight: 25 }]}>
+                  Get back to your care space
+                </Text>
+                <Body>
+                  In local demo mode, choose Patient or Doctor (or tap Other
+                  roles) and continue with Google or email using demo code
+                  123456.
+                </Body>
+                <Body muted>
+                  In cloud mode, use the same Google account or verified email
+                  address you originally used with BLOOM MED.
+                </Body>
               </View>
             </ScrollView>
-            <Button title="Done" onPress={() => setChoosing(false)} />
+            <Button
+              title="Back to login"
+              secondary
+              onPress={() => setHelpOpen(false)}
+            />
           </Card>
         </View>
       </Modal>
     </AuthLayout>
   );
 }
+
 export function ProfileForm({ onboarding = false }: { onboarding?: boolean }) {
   const { state, dispatch, notify } = useClinic();
   const [profile, setProfile] = useState(state.profile);
