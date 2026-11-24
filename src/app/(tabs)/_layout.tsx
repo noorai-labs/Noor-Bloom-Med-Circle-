@@ -1,18 +1,30 @@
-import { useLoginAudience } from "../../login-audience";
-import { cloudMode } from "../../cloud-config";
 import React from "react";
+import { useWindowDimensions } from "react-native";
 import { Redirect, Tabs } from "expo-router";
 import { useClinic } from "../../store";
+import { cloudMode } from "../../cloud-config";
+import { useLoginAudience } from "../../login-audience";
 import { Icon, theme } from "../../components";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 export default function TabLayout() {
   const { state, ready } = useClinic();
   const { audience, ready: audienceReady } = useLoginAudience();
   const insets = useSafeAreaInsets();
+  const { height } = useWindowDimensions();
   if (!ready || (cloudMode && !audienceReady)) return null;
   if (!state.session) return <Redirect href="/sign-in" />;
   if (cloudMode && audience === "Doctor" && state.session.role !== "Doctor")
     return <Redirect href="/doctor-entry" />;
+
+  const isSmallScreen = height < 680;
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : isSmallScreen ? 4 : 6;
+  const barHeight =
+    insets.bottom > 0
+      ? (isSmallScreen ? 58 : 62) + insets.bottom
+      : isSmallScreen
+        ? 64
+        : 68;
+
   return (
     <Tabs
       screenOptions={{
@@ -24,19 +36,34 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: "white",
           borderTopColor: theme.border,
-          height: 62 + Math.max(insets.bottom, 8),
-          paddingTop: 8,
-          paddingBottom: Math.max(insets.bottom, 8),
-          marginBottom: 12,
+          borderTopWidth: 1,
+          height: barHeight,
+          paddingTop: 4,
+          paddingBottom: bottomPadding,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: 0.05,
+          shadowRadius: 6,
+          elevation: 6,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "600", marginTop: 1 },
-        tabBarItemStyle: { paddingVertical: 2 },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: "600",
+          marginTop: 1,
+          marginBottom: 2,
+        },
+        tabBarItemStyle: {
+          paddingVertical: 2,
+          justifyContent: "center",
+          alignItems: "center",
+          maxWidth: 160,
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: state.session.role === "Doctor" ? "Dashboard" : "Home",
+          title: "Home",
           tabBarIcon: ({ color }) => <Icon name="grid-outline" color={color} />,
         }}
       />
@@ -44,7 +71,7 @@ export default function TabLayout() {
         name="appointments"
         options={{
           title: ["Doctor", "Nurse"].includes(state.session.role)
-            ? "Appointments"
+            ? "Visits"
             : "Care",
           tabBarIcon: ({ color }) => (
             <Icon name="calendar-outline" color={color} />
@@ -52,22 +79,20 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="records"
+        name="assistant"
         options={{
-          title: "Records",
-          href: state.session.role === "Doctor" ? null : undefined,
+          title: "Bloom AI",
           tabBarIcon: ({ color }) => (
-            <Icon name="folder-open-outline" color={color} />
+            <Icon name="sparkles-outline" color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="assistant"
+        name="records"
         options={{
-          title: "Bloom AI",
-          href: state.session.role === "Doctor" ? null : undefined,
+          title: "Records",
           tabBarIcon: ({ color }) => (
-            <Icon name="sparkles-outline" color={color} />
+            <Icon name="folder-open-outline" color={color} />
           ),
         }}
       />

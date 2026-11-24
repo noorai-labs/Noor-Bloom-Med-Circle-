@@ -1,7 +1,7 @@
 ﻿import { cloudMode } from "../cloud-config";
 import { providerFor } from "../provider-display";
 import React, { useEffect, useRef, useState } from "react";
-import { Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
 import { formatDate, visibleVisits } from "../clinic";
@@ -13,13 +13,13 @@ import {
   Field,
   Icon,
   Screen,
+  SlideDownFade,
   styles,
   theme,
   Title,
-  Touch,
 } from "../components";
 import { VoiceModal } from "../voice-modal";
-
+import { VoicePoweredOrb } from "../voice-orb";
 export default function AssistantScreen() {
   const [voiceOpen, setVoiceOpen] = useState(false);
 
@@ -165,9 +165,29 @@ function DemoAssistantScreen() {
           </Text>
         </View>
       ))}
-
-      {thinking && <Body muted>Bloom is thinking…</Body>}
-
+      {thinking && (
+        <SlideDownFade duration={300} distance={8}>
+          <View
+            accessibilityLiveRegion="polite"
+            accessibilityLabel="Bloom is thinking"
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 14,
+              backgroundColor: "#EBF3F8",
+              borderRadius: 16,
+              alignSelf: "flex-start",
+            }}
+          >
+            <ActivityIndicator size="small" color={theme.green} />
+            <Text style={{ fontSize: 13, color: theme.muted, fontWeight: "600" }}>
+              Bloom is thinking…
+            </Text>
+          </View>
+        </SlideDownFade>
+      )}
       <View style={styles.wrap}>
         {[
           "My next appointment",
@@ -184,6 +204,10 @@ function DemoAssistantScreen() {
         value={text}
         onChange={setText}
         placeholder="How can I help with your care?"
+        inputProps={{
+          returnKeyType: "send",
+          onSubmitEditing: () => send(text),
+        }}
       />
 
       <View style={styles.row}>
@@ -195,13 +219,7 @@ function DemoAssistantScreen() {
             onPress={() => send(text)}
           />
         </View>
-        <Touch
-          label="Voice assistant"
-          onPress={() => setVoice(true)}
-          style={[styles.iconButton, { height: 52, width: 52 }]}
-        >
-          <Icon name="mic-outline" />
-        </Touch>
+        <VoicePoweredOrb size={52} bg="#F6F8FA" onPress={() => setVoice(true)} />
       </View>
 
       <VoiceModal
@@ -209,7 +227,6 @@ function DemoAssistantScreen() {
         onClose={() => setVoice(false)}
         defaultLanguage={(state.profile?.language as any) || "en-IN"}
       />
-
       <Title small>Take the next step</Title>
       <View style={styles.wrap}>
         <Chip title="Find care →" onPress={() => router.push("/discover")} />

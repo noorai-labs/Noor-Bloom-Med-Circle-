@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useSyncExternalStore } from "react";
-export type LoginAudience = "Patient" | "Doctor";
+import { roles, type Role } from "./clinic";
+export type LoginAudience = Role;
 const key = "bloom-login-audience";
 let snapshot: { audience: LoginAudience; ready: boolean } = {
   audience: "Patient",
@@ -29,7 +30,7 @@ export async function getLoginAudience(): Promise<LoginAudience> {
     reading = AsyncStorage.getItem(key)
       .then((value) => {
         if (ticket === revision)
-          publish(value === "Doctor" ? "Doctor" : "Patient");
+          publish(roles.includes(value as Role) ? (value as Role) : "Patient");
         return snapshot.audience;
       })
       .catch(() => {

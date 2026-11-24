@@ -1,7 +1,10 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
   "exclude": ["backend", "node_modules", "build-refined", "build-preview", "dist", "dist-android"]
 }
