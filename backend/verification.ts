@@ -231,6 +231,10 @@ export async function verificationRoute(
         .filter((m) => m === "in-person" || m === "video");
       if (modes.length) details.modes = modes;
     }
+    const organizationId = clean(d?.organizationId, 50);
+    if (organizationId) details.organizationId = organizationId;
+    const organizationName = clean(d?.organizationName, 120);
+    if (organizationName) details.organizationName = organizationName;
     if (
       details.fullName.length < 2 ||
       d?.country !== "India" ||

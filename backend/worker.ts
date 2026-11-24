@@ -122,14 +122,27 @@ async function userId(request: Request, env: Env) {
 }
 async function ensureAccount(env: Env, user: string) {
   const space = "personal_" + user;
+  const doctorApp = await env.DB.prepare(
+    "SELECT id FROM verification_applications WHERE user_id=? AND kind='Doctor' AND status='Approved' AND valid_until>?",
+  )
+    .bind(user, verificationDay())
+    .first();
+  const defaultRole: Role = doctorApp ? "Doctor" : "Patient";
   await env.DB.batch([
     env.DB.prepare(
       "INSERT OR IGNORE INTO care_spaces (id,state) VALUES (?,?)",
     ).bind(space, JSON.stringify(emptyState())),
     env.DB.prepare(
-      "INSERT OR IGNORE INTO memberships (user_id,space_id,role) VALUES (?,?,'Patient')",
-    ).bind(user, space),
+      "INSERT OR IGNORE INTO memberships (user_id,space_id,role,provider_id) VALUES (?,?,?,?)",
+    ).bind(user, space, defaultRole, doctorApp ? user : ""),
   ]);
+  if (doctorApp) {
+    await env.DB.prepare(
+      "UPDATE memberships SET role='Doctor', provider_id=? WHERE user_id=? AND space_id=?",
+    )
+      .bind(user, user, space)
+      .run();
+  }
   return space;
 }
 async function access(env: Env, user: string, space: string) {
@@ -180,6 +193,7 @@ async function access(env: Env, user: string, space: string) {
     );
   if (
     ["Doctor", "Nurse"].includes(member.role) &&
+    space !== "personal_" + user &&
     !state.visits.some(
       (v) => v.providerId === member.provider_id && v.status !== "Cancelled",
     )
@@ -273,6 +287,18 @@ async function route(
     url.pathname.startsWith("/v1/providers/")
   )
     return providerRoute(request, env, user);
+  if (url.pathname === "/v1/organizations" && request.method === "GET") {
+    const search = url.searchParams.get("search")?.trim().toLowerCase() || "";
+    let query = "SELECT id, name, code FROM organizations";
+    const bindings: unknown[] = [];
+    if (search) {
+      query += " WHERE LOWER(name) LIKE ? OR LOWER(code) LIKE ?";
+      bindings.push("%" + search + "%", "%" + search + "%");
+    }
+    query += " ORDER BY name ASC LIMIT 50";
+    const rows = await env.DB.prepare(query).bind(...bindings).all();
+    return Response.json({ organizations: rows.results });
+  }
   if (
     url.pathname === "/v1/reminders/revoke-session" &&
     request.method === "POST"
@@ -316,9 +342,11 @@ async function route(
       rows.results.map((r) => ({
         id: r.id,
         name:
-          r.role === "Family" && !JSON.parse(r.state).profile.consent
-            ? "Consent required"
-            : JSON.parse(r.state).profile.name || "My care space",
+          r.role === "Doctor" && r.id === personal
+            ? "Doctor Dashboard"
+            : r.role === "Family" && !JSON.parse(r.state).profile.consent
+              ? "Consent required"
+              : JSON.parse(r.state).profile.name || "My care space",
         role: r.role,
         providerId: r.provider_id,
       })),

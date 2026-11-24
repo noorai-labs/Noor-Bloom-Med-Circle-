@@ -18,6 +18,8 @@ export type VerificationDetails = {
   specialty?: string;
   languages?: string[];
   modes?: string[];
+  organizationId?: string;
+  organizationName?: string;
 };
 export type VerificationApplication = {
   id: string;

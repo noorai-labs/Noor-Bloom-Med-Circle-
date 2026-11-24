@@ -467,6 +467,134 @@ module.exports = async ({ db, request, mf }) => {
   assert.equal(e2eNoMatch.status, 200);
   assert.ok(!e2eNoMatch.data.providers.some((p) => p.id === e2eApplicant));
 
+  // 13. Day 2: Organization search, selection on submission, Needs info flow, and post-approval Doctor Home access
+  // Organization search
+  const orgsList = await request(patientUser, "/v1/organizations");
+  assert.equal(orgsList.status, 200);
+  assert.ok(orgsList.data.organizations.length >= 4);
+  assert.ok(
+    orgsList.data.organizations.some((o) => o.id === "org_bloom"),
+    "Seeded organizations must be listed",
+  );
+
+  const searchBloom = await request(patientUser, "/v1/organizations?search=bloom");
+  assert.equal(searchBloom.status, 200);
+  assert.equal(searchBloom.data.organizations.length, 1);
+  assert.equal(searchBloom.data.organizations[0].id, "org_bloom");
+
+  // First-time doctor onboarding with organization selection
+  const orgDoctor = "doc_onboarding_" + randomUUID().slice(0, 8);
+  const orgDocEvidence = (
+    await request(
+      orgDoctor,
+      "/v1/verification/documents?consent=1&name=doc.pdf",
+      "POST",
+      pdfContent,
+      "application/pdf",
+    )
+  ).data.id;
+
+  const orgDocSubmit = await request(orgDoctor, "/v1/verification/submit", "POST", {
+    kind: "Doctor",
+    revision: 0,
+    details: {
+      fullName: "Dr. Onboarding Clinician",
+      country: "India",
+      authority: "State Medical Council",
+      registrationNumber: "SMC-DAY2-001",
+      qualification: "MBBS",
+      consent: true,
+      organizationId: "org_bloom",
+      organizationName: "MedBloom Health Network",
+      specialty: "General Medicine",
+      languages: ["English"],
+      modes: ["in-person"],
+    },
+    documents: [orgDocEvidence],
+  });
+  assert.equal(orgDocSubmit.status, 200);
+  const orgAppId = orgDocSubmit.data.id;
+
+  // Verify review status tracking
+  let docStatus = (await request(orgDoctor, "/v1/verification")).data;
+  assert.equal(docStatus.applications[0].status, "Submitted");
+  assert.equal(docStatus.applications[0].details.organizationId, "org_bloom");
+  assert.equal(
+    docStatus.applications[0].details.organizationName,
+    "MedBloom Health Network",
+  );
+
+  // Reviewer requests more info
+  await request(reviewerUser, "/v1/verification/review", "POST", {
+    id: orgAppId,
+    revision: 1,
+    status: "Needs information",
+    reason: "Please attach certified registration document",
+  });
+
+  docStatus = (await request(orgDoctor, "/v1/verification")).data;
+  assert.equal(docStatus.applications[0].status, "Needs information");
+  assert.equal(
+    docStatus.applications[0].reason,
+    "Please attach certified registration document",
+  );
+
+  // Doctor responds to Needs Information by re-submitting with new evidence
+  const renewedDoc = (
+    await request(
+      orgDoctor,
+      "/v1/verification/documents?consent=1&name=renewed.pdf",
+      "POST",
+      pdfContent,
+      "application/pdf",
+    )
+  ).data.id;
+
+  const resubmitted = await request(orgDoctor, "/v1/verification/submit", "POST", {
+    kind: "Doctor",
+    revision: docStatus.applications[0].revision,
+    details: {
+      ...docStatus.applications[0].details,
+      qualification: "MBBS, MD",
+    },
+    documents: [renewedDoc],
+  });
+  assert.equal(resubmitted.status, 200);
+
+  // Reviewer approves the application
+  await request(reviewerUser, "/v1/verification/review", "POST", {
+    id: orgAppId,
+    revision: resubmitted.data.revision,
+    status: "Approved",
+    reason: "Valid registration confirmed",
+    identityReference: "AADHAAR-OK",
+    registrationReference: "REG-OK",
+    validUntil: futureDate,
+  });
+
+  // Verify post-approval Doctor Home access without assigned visit or workspace
+  const docSpaces = await request(orgDoctor, "/v1/spaces");
+  assert.equal(docSpaces.status, 200);
+  const docPersonalSpace = docSpaces.data.find((s) => s.role === "Doctor");
+  assert.ok(
+    docPersonalSpace,
+    "Approved doctor must have an unlocked Doctor Dashboard workspace",
+  );
+  assert.equal(docPersonalSpace.name, "Doctor Dashboard");
+
+  // Accessing Doctor Dashboard state succeeds without assigned visit requirement
+  const docHomeState = await request(
+    orgDoctor,
+    "/v1/state?space=" + docPersonalSpace.id,
+  );
+  assert.equal(
+    docHomeState.status,
+    200,
+    "Approved doctor must be able to open Doctor Home without an assigned visit",
+  );
+  assert.equal(docHomeState.data.state.session.role, "Doctor");
+  assert.equal(docHomeState.data.state.session.providerId, orgDoctor);
+
   console.log(
     "Passed: provider directory discovery, approved/unapproved/expired gates, zero data leakage, filters, pagination and input validation.",
   );

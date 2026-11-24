@@ -74,9 +74,21 @@ export default function DoctorEntry() {
             Submit your registration and supporting documents for manual review.
           </Body>
         )}
+        {application?.status === "Approved" && spaces.length > 0 && (
+          <Button
+            title="Enter Doctor Dashboard"
+            disabled={busy}
+            onPress={() =>
+              void run(async () => {
+                await cloud!.select(spaces[0].id);
+              })
+            }
+          />
+        )}
         <Button
           title={application ? "View doctor application" : "Apply as a doctor"}
           disabled={busy}
+          secondary={application?.status === "Approved"}
           onPress={() =>
             router.push({
               pathname: "/verification",
