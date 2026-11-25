@@ -186,6 +186,7 @@ export function evaluatePatientKnowledge(
   language: VoiceLanguage = "en-IN",
   clinicState?: ClinicState | null,
   history: ConversationTurn[] = [],
+  referenceDate?: Date,
 ): AdvancedVoiceResponse {
   const t = transcript.toLowerCase().trim();
   const lastTurn = history.length > 0 ? history[history.length - 1] : null;
@@ -193,52 +194,23 @@ export function evaluatePatientKnowledge(
   const activeMeds = allMeds.filter((m) => m.active);
 
   // 1. EMERGENCY & SOS DISPATCH (Highest Priority Safety Guardrail)
-  // Matches distress symptoms AND explicit SOS requests, while avoiding benign or negated breathing mentions.
-  const isNegatedBreathing =
-    t.includes("कोई परेशानी नहीं") ||
-    t.includes("कोई तकलीफ नहीं") ||
-    t.includes("कोई दिक्कत नहीं") ||
-    t.includes("परेशानी नहीं") ||
-    t.includes("तकलीफ नहीं") ||
-    t.includes("दिक्कत नहीं") ||
-    t.includes("सांस ठीक") ||
-    t.includes("saans theek") ||
-    t.includes("no problem") ||
-    t.includes("no difficulty");
-
-  const hasBreathingDistress =
-    !isNegatedBreathing &&
-    (t.includes("cannot breathe") ||
-      t.includes("can't breathe") ||
-      t.includes("difficulty breathing") ||
-      t.includes("shortness of breath") ||
-      t.includes("ಉಸಿರಾಟದ ತೊಂದರೆ") ||
-      t.includes("ಉಸಿರಾಡಲು ಕಷ್ಟ") ||
-      ((t.includes("सांस") || t.includes("saans")) &&
-        (t.includes("तकलीफ") ||
-          t.includes("परेशानी") ||
-          t.includes("दिक्कत") ||
-          t.includes("कठिनाई") ||
-          t.includes("फूल") ||
-          t.includes("नहीं आ") ||
-          t.includes("रुक") ||
-          t.includes("takleef") ||
-          t.includes("pareshani") ||
-          t.includes("dikkat") ||
-          t.includes("kathinai") ||
-          t.includes("phool") ||
-          t.includes("nahi aa"))));
-
-  const isEmergencyRequest =
-    hasBreathingDistress ||
-    t.includes("emergency") ||
-    t.includes("sos") ||
-    t.includes("ambulance") ||
-    t.includes("urgent help") ||
+  // Direct affirmative distress is NEVER suppressed by benign mentions in other clauses (e.g. "no difficulty walking but cannot breathe")
+  const hasAffirmativeDistress =
+    t.includes("cannot breathe") ||
+    t.includes("can't breathe") ||
+    t.includes("unable to breathe") ||
+    t.includes("hard to breathe") ||
+    t.includes("shortness of breath") ||
+    t.includes("struggling to breathe") ||
+    t.includes("gasping for breath") ||
     t.includes("chest pain") ||
     t.includes("collapsed") ||
     t.includes("severe dizziness") ||
     t.includes("heart attack") ||
+    t.includes("emergency") ||
+    t.includes("sos") ||
+    t.includes("ambulance") ||
+    t.includes("urgent help") ||
     // Hindi distress & emergency qualifiers
     t.includes("chhati me dard") ||
     t.includes("छाती में दर्द") ||
@@ -248,13 +220,55 @@ export function evaluatePatientKnowledge(
     t.includes("एम्बुलेंस") ||
     // Kannada distress & emergency qualifiers
     t.includes("ಎದೆ ನೋವು") ||
+    t.includes("ಉಸಿರಾಟದ ತೊಂದರೆ") ||
+    t.includes("ಉಸಿರಾಡಲು ಕಷ್ಟ") ||
     t.includes("ತುರ್ತು") ||
     t.includes("ಆಂಬ್ಯುಲೆನ್ಸ್") ||
     // Tamil & Telugu emergency qualifiers
     t.includes("அவசர") ||
     t.includes("அவசரம்") ||
+    t.includes("மூச்சுத்திணறல்") ||
     t.includes("అత్యవసర") ||
-    t.includes("అత్యవసరం");
+    t.includes("అత్యవసరం") ||
+    t.includes("శ్వాస తీసుకోవడంలో ఇబ్బంది");
+
+  // Specific negated breathing expressions (only negates when specifically referring to breathing)
+  const isBreathingClauseNegated =
+    t.includes("no difficulty breathing") ||
+    t.includes("no trouble breathing") ||
+    t.includes("no problem breathing") ||
+    t.includes("not having difficulty breathing") ||
+    t.includes("not having trouble breathing") ||
+    t.includes("saans theek") ||
+    t.includes("सांस ठीक") ||
+    /(?:सांस|saans)[^\p{P}]*(?:कोई\s*)?(?:परेशानी|तकलीफ|दिक्कत)\s*नहीं/u.test(t) ||
+    /(?:कोई\s*)?(?:परेशानी|तकलीफ|दिक्कत)\s*नहीं[^\p{P}]*(?:सांस|saans)/u.test(t);
+
+  const hasIndicBreathingDistress =
+    !isBreathingClauseNegated &&
+    ((t.includes("सांस") || t.includes("saans")) &&
+      (t.includes("तकलीफ") ||
+        t.includes("परेशानी") ||
+        t.includes("दिक्कत") ||
+        t.includes("कठिनाई") ||
+        t.includes("फूल") ||
+        t.includes("नहीं आ") ||
+        t.includes("रुक") ||
+        t.includes("takleef") ||
+        t.includes("pareshani") ||
+        t.includes("dikkat") ||
+        t.includes("kathinai") ||
+        t.includes("phool") ||
+        t.includes("nahi aa")));
+
+  const hasEnglishDifficultyBreathing =
+    !isBreathingClauseNegated &&
+    (t.includes("difficulty breathing") || t.includes("trouble breathing"));
+
+  const isEmergencyRequest =
+    hasAffirmativeDistress ||
+    hasEnglishDifficultyBreathing ||
+    hasIndicBreathingDistress;
 
   if (isEmergencyRequest) {
     let spoken =
@@ -696,8 +710,8 @@ export function evaluatePatientKnowledge(
     t.includes("అపాయింట్‌మెంట్") ||
     t.includes("ఎప్పుడు")
   ) {
-    const today = dayKey();
-    const now = new Date();
+    const now = referenceDate || new Date();
+    const today = dayKey(now);
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
     const upcoming = (clinicState?.visits || [])

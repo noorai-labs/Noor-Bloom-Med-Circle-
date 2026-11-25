@@ -205,6 +205,21 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
     this.speechGeneration++;
     this.isSpeaking = false;
 
+    // 1. Immediately pause and silence the active Audio element before settling playback
+    if (this.activeAudio) {
+      const audio = this.activeAudio;
+      this.activeAudio = null;
+      try {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {
+        // ignore
+      }
+    }
+
+    // 2. Settle the active playback promise and release the object URL
     if (this.activePlaybackCleanup) {
       const cleanup = this.activePlaybackCleanup;
       this.activePlaybackCleanup = null;
@@ -223,19 +238,6 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
     if (this.activePlaybackTimeout) {
       clearTimeout(this.activePlaybackTimeout);
       this.activePlaybackTimeout = null;
-    }
-
-    if (this.activeAudio) {
-      const audio = this.activeAudio;
-      this.activeAudio = null;
-      try {
-        audio.onended = null;
-        audio.onerror = null;
-        audio.pause();
-        audio.currentTime = 0;
-      } catch {
-        // ignore
-      }
     }
   }
 

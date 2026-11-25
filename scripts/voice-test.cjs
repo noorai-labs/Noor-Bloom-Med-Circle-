@@ -1,4 +1,4 @@
-﻿const assert = require("node:assert/strict");
+const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const ts = require("typescript");
@@ -469,13 +469,28 @@ const followUpPreserved = evaluatePatientKnowledge(
 );
 assert.equal(followUpPreserved.spokenResponse.includes("Atorvastatin"), true);
 
-// 4. Negated breathing statement must not trigger SOS
+// 4. Negated breathing statement must not trigger SOS, but compound clauses with distress must trigger SOS
 const negatedHindiBreathing = evaluatePatientKnowledge(
   "सांस लेने में कोई परेशानी नहीं है",
   "hi-IN",
   mockClinicState,
 );
 assert.notEqual(negatedHindiBreathing.intent, "EMERGENCY_SOS");
+
+const negatedEnglishBreathing = evaluatePatientKnowledge(
+  "I have no difficulty breathing",
+  "en-IN",
+  mockClinicState,
+);
+assert.notEqual(negatedEnglishBreathing.intent, "EMERGENCY_SOS");
+
+const compoundBreathingDistress = evaluatePatientKnowledge(
+  "I have no difficulty walking but I cannot breathe",
+  "en-IN",
+  mockClinicState,
+);
+assert.equal(compoundBreathingDistress.intent, "EMERGENCY_SOS");
+assert.equal(compoundBreathingDistress.targetRoute, "/sos");
 
 const distressHindiBreathing = evaluatePatientKnowledge(
   "सांस लेने में बहुत तकलीफ हो रही है",
@@ -485,14 +500,16 @@ const distressHindiBreathing = evaluatePatientKnowledge(
 assert.equal(distressHindiBreathing.intent, "EMERGENCY_SOS");
 assert.equal(distressHindiBreathing.targetRoute, "/sos");
 
-// 5. Elapsed appointments today are filtered out
+// 5. Elapsed appointments today are filtered out deterministically
+const fixedNow = new Date("2026-11-25T14:00:00");
+const fixedToday = clinicMod.dayKey(fixedNow);
 const pastTodayVisit = {
   id: "v_today_past",
   patientId: "p1",
   doctorId: "d1",
   doctorName: "Dr. Past",
   service: "Early Consultation",
-  date: today,
+  date: fixedToday,
   time: "12:01 AM",
   status: "Confirmed",
 };
@@ -502,7 +519,7 @@ const futureTodayVisit = {
   doctorId: "d1",
   doctorName: "Dr. Future",
   service: "Evening Checkup",
-  date: today,
+  date: fixedToday,
   time: "11:59 PM",
   status: "Confirmed",
 };
@@ -514,6 +531,8 @@ const apptFilteredRes = evaluatePatientKnowledge(
   "When is my next appointment?",
   "en-IN",
   elapsedFilterState,
+  [],
+  fixedNow,
 );
 assert.equal(
   apptFilteredRes.spokenResponse.includes("Evening Checkup"),
@@ -521,7 +540,36 @@ assert.equal(
   "Must pick the upcoming appointment, not the elapsed one",
 );
 
-// 6. Indic stop command regex retains combining marks
+// 6. Audio adapter stopSpeaking pauses activeAudio before settling cleanup
+const adapterMod = load("src/deepgram-cartesia-adapter.ts", {
+  "./cloud-client": { CloudClient: class {} },
+  "./voice-types": {},
+});
+const testAdapter = new adapterMod.DeepgramCartesiaAdapter();
+let audioPausedBeforeCleanup = false;
+let playbackCleanedUp = false;
+testAdapter.activeAudio = {
+  pause() {
+    audioPausedBeforeCleanup = true;
+  },
+  currentTime: 10,
+  onended: null,
+  onerror: null,
+};
+testAdapter.activePlaybackCleanup = () => {
+  assert.equal(
+    audioPausedBeforeCleanup,
+    true,
+    "activeAudio must be paused before activePlaybackCleanup settles",
+  );
+  playbackCleanedUp = true;
+};
+testAdapter.stopSpeaking();
+assert.equal(audioPausedBeforeCleanup, true);
+assert.equal(playbackCleanedUp, true);
+assert.equal(testAdapter.activeAudio, null);
+
+// 7. Indic stop command regex retains combining marks
 const testStopRegex = (text) =>
   text
     .toLowerCase()
