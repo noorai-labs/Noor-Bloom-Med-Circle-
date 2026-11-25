@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS reminder_revoked_sessions (
 );
 
 CREATE TABLE IF NOT EXISTS reminder_deliveries (
-  id VARCHAR(64) PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   device_id VARCHAR(64) NOT NULL,
   user_id VARCHAR(64) NOT NULL,
   space_id VARCHAR(64) NOT NULL,
@@ -171,8 +171,8 @@ CREATE TABLE IF NOT EXISTS verification_events (
   actor_id VARCHAR(64) NOT NULL,
   action VARCHAR(64) NOT NULL,
   reason TEXT NOT NULL,
-  identity_reference VARCHAR(128) NOT NULL DEFAULT '',
-  registration_reference VARCHAR(128) NOT NULL DEFAULT '',
+  identity_reference TEXT NOT NULL DEFAULT '',
+  registration_reference TEXT NOT NULL DEFAULT '',
   details JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (application_id, revision)

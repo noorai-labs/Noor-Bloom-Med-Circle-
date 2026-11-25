@@ -152,6 +152,10 @@ The current D1 database consists of **19 tables** across 6 ordered migrations:
 
 ## 5. Step 4: Database Adapter Contract & Migration Ordering
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:b937494b253b6eb088b19009247209e12f2adb1a3b052968811bf186f2357bed -->
+
 ### 5.1 The Universal Database Adapter Contract
 
 To ensure that the application layer remains completely decoupled from database engine specifics, all database queries will route through the `DatabaseAdapter` interface:
@@ -162,17 +166,25 @@ export interface QueryResult<T = unknown> {
   changes: number;
 }
 
+export interface Statement {
+  sql: string;
+  params?: unknown[];
+}
+
 export interface DatabaseAdapter {
   query<T = unknown>(sql: string, params?: unknown[]): Promise<T[]>;
   queryOne<T = unknown>(sql: string, params?: unknown[]): Promise<T | null>;
   execute(sql: string, params?: unknown[]): Promise<QueryResult>;
+  batch(statements: Statement[]): Promise<QueryResult[]>;
   transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T>;
 }
 ```
 
 ### 5.2 Implementation Strategy
-- **D1 Adapter Implementation:** Implements `DatabaseAdapter` by wrapping `D1Database`, `D1PreparedStatement`, and `env.DB.batch(...)`.
-- **PostgreSQL Adapter Implementation:** Implements `DatabaseAdapter` by translating `?` to `$1, $2`, mapping JSON strings to `JSONB`, and wrapping multi-statement blocks with `BEGIN ... COMMIT / ROLLBACK`.
+- **D1 Adapter Implementation:** Use `batch()` for a fixed set of statements that must commit or roll back together. D1 rejects `transaction()` before invoking the callback because it cannot provide interactive rollback.
+- **PostgreSQL Adapter Implementation:** Translates positional `?` markers, maps JSON parameters, and leases one connection through `BEGIN` and `COMMIT` or `ROLLBACK`. Inside a callback, use the provided adapter and await all its work. Its `batch()` joins the outer transaction; nested `transaction()` calls are unsupported.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ### 5.3 Migration Ordering
 
@@ -225,7 +237,20 @@ node scripts/reconcile-appointments.cjs
 2. **Backfill Migration:** Stream historical records from D1 to PostgreSQL table-by-table according to the defined migration ordering.
 3. **Dual-Write / Verification Window:** Backend writes to D1 and PostgreSQL concurrently, comparing results for discrepancies.
 4. **Cutover:** Switch primary read/write traffic to PostgreSQL via the Database Adapter.
-5. **Rollback Plan:** If severe latency or connection pool saturation occurs, the `DatabaseAdapter` feature flag is toggled back to D1 within 60 seconds without data format corruption.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:474cbf3673dfa3b8ff70cb7775fed46b4072598fd6fa54d2d6b27404f0d19bf0 -->
+
+### 7.3 Rollback Checkpoint
+
+Before cutover, confirm operators can capture and replay all committed PostgreSQL changes since the last verified common checkpoint. If rollback is needed:
+
+1. Fence writes to both databases, including background jobs, and drain or stop in-flight writers. Record the final PostgreSQL commit position after the fence is in effect.
+2. With PostgreSQL still authoritative, apply all committed changes through that position to D1 in dependency order, including updates, deletions, audit events, and operation IDs. Use a replay process that can be retried without duplicating changes.
+3. Reconcile D1 against PostgreSQL at the checkpoint. Verify primary keys, values and deletions across the migrated tables, and check booking uniqueness and idempotent retry records. Resolve every discrepancy before switching.
+4. While writes are still fenced, switch reads and writes to D1 using the feature flag. Confirm routing and D1 readiness before reopening writes there. If replay or verification cannot complete, keep the flag on PostgreSQL and keep writes fenced while resolving the failure.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ---
 

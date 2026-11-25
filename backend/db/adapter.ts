@@ -38,7 +38,7 @@ export class D1Adapter implements DatabaseAdapter {
     }));
   }
 
-  async transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T> {
+  async transaction<T>(_fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T> {
     throw new Error(
       "D1 does not support interactive transactions; use batch() for atomic statement groups.",
     );
@@ -46,13 +46,21 @@ export class D1Adapter implements DatabaseAdapter {
 }
 
 /**
- * Interface representing a standard PostgreSQL client (e.g. pg, neon, or a local pool).
+ * PostgreSQL query interface shared by a pool and its leased connections.
  */
 export interface PgClientLike {
   query<T = unknown>(
     sql: string,
     params?: unknown[],
-  ): Promise<{ rows: T[]; rowCount: number | null }>;
+  ): Promise<{ rows: T[]; rowCount: number | null; command?: string }>;
+}
+
+export interface PgConnectionLike extends PgClientLike {
+  release(destroy?: boolean): void;
+}
+
+export interface PgPoolLike extends PgClientLike {
+  connect(): Promise<PgConnectionLike>;
 }
 
 /**
@@ -60,14 +68,65 @@ export interface PgClientLike {
  * Implements parameter mapping ($1, $2), JSONB conversion, and ACID transactions.
  */
 export class PostgresAdapter implements DatabaseAdapter {
-  constructor(private client: PgClientLike) {}
+  private connection?: PgConnectionLike;
+  private closed = false;
+
+  constructor(private pool: PgPoolLike) {}
+
+  private get client(): PgClientLike {
+    if (this.closed) throw new Error("The PostgreSQL transaction has ended.");
+    return this.connection ?? this.pool;
+  }
 
   /**
    * Translates SQLite '?' positional placeholders into PostgreSQL '$1, $2, ...' numbered placeholders.
    */
   public static translateQuery(sql: string): string {
+    // Skip whole identifiers so an embedded dollar sign cannot start a dollar quote.
+    const tokens = /--|\/\*|[eE]'|['"`]|\$(?:[a-z_\u0080-\uffff][\w\u0080-\uffff]*)?\$|[a-z_\u0080-\uffff][\w$\u0080-\uffff]*|\?/gi;
     let index = 1;
-    return sql.replace(/\?/g, () => `$${index++}`);
+    let copied = 0;
+    let translated = "";
+
+    for (let match; (match = tokens.exec(sql));) {
+      const token = match[0];
+      let end = tokens.lastIndex;
+      if (token === "?") {
+        translated += sql.slice(copied, match.index) + `$${index++}`;
+        copied = end;
+      } else if (token === "--") {
+        while (end < sql.length && sql[end] !== "\n" && sql[end] !== "\r") end++;
+      } else if (token === "/*") {
+        let depth = 1;
+        while (end < sql.length && depth > 0) {
+          if (sql.startsWith("/*", end)) {
+            depth++;
+            end += 2;
+          } else if (sql.startsWith("*/", end)) {
+            depth--;
+            end += 2;
+          } else {
+            end++;
+          }
+        }
+      } else if (token.startsWith("$")) {
+        const closing = sql.indexOf(token, end);
+        end = closing < 0 ? sql.length : closing + token.length;
+      } else if (token.endsWith("'") || token === '"' || token === "`") {
+        const quote = token[token.length - 1];
+        while (end < sql.length) {
+          const char = sql[end++];
+          if (token.length === 2 && char === "\\") {
+            end++;
+          } else if (char === quote) {
+            if (sql[end] !== quote) break;
+            end++;
+          }
+        }
+      }
+      tokens.lastIndex = end;
+    }
+    return translated + sql.slice(copied);
   }
 
   /**
@@ -105,25 +164,53 @@ export class PostgresAdapter implements DatabaseAdapter {
   }
 
   async batch(statements: Statement[]): Promise<QueryResult[]> {
-    return await this.transaction(async (tx) => {
-      const results: QueryResult[] = [];
-      for (const stmt of statements) {
-        const res = await tx.execute(stmt.sql, stmt.params || []);
-        results.push(res);
-      }
-      return results;
-    });
+    if (!this.connection) return this.transaction((tx) => tx.batch(statements));
+
+    // Use the enclosing transaction. Its caller owns commit and rollback.
+    if (this.closed) throw new Error("The PostgreSQL transaction has ended.");
+    const results: QueryResult[] = [];
+    for (const stmt of statements) {
+      results.push(await this.execute(stmt.sql, stmt.params));
+    }
+    return results;
   }
 
   async transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T> {
-    await this.client.query("BEGIN");
+    if (this.connection) throw new Error("Nested PostgreSQL transactions are not supported.");
+
+    const connection = await this.pool.connect();
+    const tx = new PostgresAdapter(this.pool);
+    tx.connection = connection;
+
+    // Discard the connection if BEGIN or the rollback fails.
+    let destroy = true;
     try {
-      const result = await fn(this);
-      await this.client.query("COMMIT");
+      await connection.query("BEGIN");
+      let result: T;
+      let commit;
+      try {
+        try {
+          result = await fn(tx);
+        } finally {
+          tx.closed = true;
+        }
+        commit = await connection.query("COMMIT");
+      } catch (error) {
+        try {
+          await connection.query("ROLLBACK");
+          destroy = false;
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], "PostgreSQL transaction and rollback both failed.");
+        }
+        throw error;
+      }
+      destroy = false;
+      if (commit.command === "ROLLBACK") {
+        throw new Error("PostgreSQL rolled back the transaction instead of committing.");
+      }
       return result;
-    } catch (err) {
-      await this.client.query("ROLLBACK");
-      throw err;
+    } finally {
+      connection.release(destroy);
     }
   }
 }
