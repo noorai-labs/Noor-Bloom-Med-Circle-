@@ -200,7 +200,6 @@ export function evaluatePatientKnowledge(
     t.includes("can't breathe") ||
     t.includes("unable to breathe") ||
     t.includes("hard to breathe") ||
-    t.includes("shortness of breath") ||
     t.includes("struggling to breathe") ||
     t.includes("gasping for breath") ||
     t.includes("chest pain") ||
@@ -237,8 +236,11 @@ export function evaluatePatientKnowledge(
     t.includes("no difficulty breathing") ||
     t.includes("no trouble breathing") ||
     t.includes("no problem breathing") ||
+    t.includes("no shortness of breath") ||
+    t.includes("without shortness of breath") ||
     t.includes("not having difficulty breathing") ||
     t.includes("not having trouble breathing") ||
+    t.includes("not having shortness of breath") ||
     t.includes("saans theek") ||
     t.includes("सांस ठीक") ||
     /(?:सांस|saans)[^\p{P}]*(?:कोई\s*)?(?:परेशानी|तकलीफ|दिक्कत)\s*नहीं/u.test(t) ||
@@ -263,7 +265,9 @@ export function evaluatePatientKnowledge(
 
   const hasEnglishDifficultyBreathing =
     !isBreathingClauseNegated &&
-    (t.includes("difficulty breathing") || t.includes("trouble breathing"));
+    (t.includes("difficulty breathing") ||
+      t.includes("trouble breathing") ||
+      t.includes("shortness of breath"));
 
   const isEmergencyRequest =
     hasAffirmativeDistress ||

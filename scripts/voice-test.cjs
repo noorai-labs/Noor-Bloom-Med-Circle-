@@ -484,6 +484,21 @@ const negatedEnglishBreathing = evaluatePatientKnowledge(
 );
 assert.notEqual(negatedEnglishBreathing.intent, "EMERGENCY_SOS");
 
+const negatedShortnessOfBreath = evaluatePatientKnowledge(
+  "I have no shortness of breath",
+  "en-IN",
+  mockClinicState,
+);
+assert.notEqual(negatedShortnessOfBreath.intent, "EMERGENCY_SOS");
+
+const affirmativeShortnessOfBreath = evaluatePatientKnowledge(
+  "I have severe shortness of breath",
+  "en-IN",
+  mockClinicState,
+);
+assert.equal(affirmativeShortnessOfBreath.intent, "EMERGENCY_SOS");
+assert.equal(affirmativeShortnessOfBreath.targetRoute, "/sos");
+
 const compoundBreathingDistress = evaluatePatientKnowledge(
   "I have no difficulty walking but I cannot breathe",
   "en-IN",
