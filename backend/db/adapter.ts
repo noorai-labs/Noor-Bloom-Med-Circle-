@@ -39,7 +39,9 @@ export class D1Adapter implements DatabaseAdapter {
   }
 
   async transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T> {
-    return await fn(this);
+    throw new Error(
+      "D1 does not support interactive transactions; use batch() for atomic statement groups.",
+    );
   }
 }
 

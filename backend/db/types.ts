@@ -35,8 +35,9 @@ export interface DatabaseAdapter {
   batch(statements: Statement[]): Promise<QueryResult[]>;
 
   /**
-   * Executes operations within an interactive ACID transaction.
-   * Automatically issues BEGIN and COMMIT on success, or ROLLBACK on error.
+   * Executes operations within an interactive ACID transaction when supported.
+   * Supported adapters commit on success and roll back on error. Adapters without
+   * interactive transaction support must reject before invoking the callback.
    */
   transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>): Promise<T>;
 }
