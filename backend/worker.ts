@@ -24,6 +24,7 @@ import {
   type CallEnv,
 } from "./calls";
 import { providerRoute, ProviderError } from "./providers";
+import { availabilityRoute, AvailabilityError } from "./availability";
 export { MedicineReminderScheduler } from "./reminders";
 
 type Env = ReminderEnv &
@@ -273,6 +274,8 @@ async function route(
     url.pathname.startsWith("/v1/providers/")
   )
     return providerRoute(request, env, user);
+  if (url.pathname === "/v1/availability")
+    return availabilityRoute(request, env, user);
   if (
     url.pathname === "/v1/reminders/revoke-session" &&
     request.method === "POST"
@@ -596,9 +599,26 @@ async function route(
         },
       };
     }
+    let stateForTransition = snapshot.state;
+    if (
+      action.type === "book" &&
+      !snapshot.state.approved.includes(action.visit.providerId)
+    ) {
+      const verifiedProvider = await env.DB.prepare(
+        "SELECT 1 FROM verification_applications WHERE user_id=? AND status='Approved' AND valid_until > ? AND kind IN ('Doctor','Nurse')",
+      )
+        .bind(action.visit.providerId, verificationDay())
+        .first();
+      if (verifiedProvider) {
+        stateForTransition = {
+          ...snapshot.state,
+          approved: [...snapshot.state.approved, action.visit.providerId],
+        };
+      }
+    }
     let next: ClinicState;
     try {
-      next = cloudTransition(snapshot.state, action, operationId);
+      next = cloudTransition(stateForTransition, action, operationId);
     } catch (error) {
       throw new HttpError(
         400,
@@ -764,7 +784,8 @@ export default {
         !(e instanceof HttpError) &&
         !(e instanceof VerificationError) &&
         !(e instanceof CallError) &&
-        !(e instanceof ProviderError)
+        !(e instanceof ProviderError) &&
+        !(e instanceof AvailabilityError)
       )
         console.error("Unexpected Worker operation failure");
       response = Response.json(
@@ -773,7 +794,8 @@ export default {
             e instanceof HttpError ||
             e instanceof VerificationError ||
             e instanceof CallError ||
-            e instanceof ProviderError
+            e instanceof ProviderError ||
+            e instanceof AvailabilityError
               ? e.message
               : "Unable to complete the cloud request.",
         },
@@ -782,7 +804,8 @@ export default {
             e instanceof HttpError ||
             e instanceof VerificationError ||
             e instanceof CallError ||
-            e instanceof ProviderError
+            e instanceof ProviderError ||
+            e instanceof AvailabilityError
               ? e.status
               : 500,
         },

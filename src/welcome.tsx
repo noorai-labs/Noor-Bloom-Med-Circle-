@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AuthLayout } from "./auth-layout";
-import { BloomLogo, StartupLoader } from "./branding";
+import { BloomLogo } from "./branding";
 import {
   Body,
   Button,
@@ -126,7 +126,7 @@ export function WelcomeGate({ children }: { children: React.ReactNode }) {
     void AsyncStorage.setItem(key, "yes").catch(() => {});
   }
   if (state.session || seen) return <>{children}</>;
-  if (seen === null) return <StartupLoader />;
+  if (seen === null) return null;
   const content = pages[page];
   const compact = height < 700;
   return (
@@ -143,7 +143,7 @@ export function WelcomeGate({ children }: { children: React.ReactNode }) {
           <Text
             style={{ color: theme.ink, fontWeight: "800", letterSpacing: 1 }}
           >
-            BLOOM MED
+            MED BLOOM
           </Text>
         </View>
         <Touch

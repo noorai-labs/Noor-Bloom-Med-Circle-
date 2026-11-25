@@ -216,6 +216,23 @@ export async function verificationRoute(
       registrationNumber: clean(d?.registrationNumber, 100),
       qualification: clean(d?.qualification),
       consent: d?.consent === true,
+      ...(d?.organizationId ? { organizationId: clean(d.organizationId, 100) } : {}),
+      ...(d?.organizationName ? { organizationName: clean(d.organizationName, 120) } : {}),
+      ...(d?.specialty ? { specialty: clean(d.specialty, 100) } : {}),
+      ...(Array.isArray(d?.languages)
+        ? {
+            languages: d.languages
+              .map((l: unknown) => String(l).trim())
+              .filter(Boolean),
+          }
+        : {}),
+      ...(Array.isArray(d?.modes)
+        ? {
+            modes: d.modes
+              .map((m: unknown) => String(m).trim())
+              .filter(Boolean),
+          }
+        : {}),
     };
     if (
       details.fullName.length < 2 ||

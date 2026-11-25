@@ -7,25 +7,43 @@ import { router } from "expo-router";
 import { randomUUID } from "expo-crypto";
 import { fetch as expoFetch } from "expo/fetch";
 import { Directory, File, Paths } from "expo-file-system";
-import { type Action } from "./clinic";
+import { type Action, type ClinicState } from "./clinic";
 import { cloudTransition } from "./cloud-transition";
+import { findProvider } from "./provider-display";
 import { apiUrl } from "./cloud-config";
 import {
   cloudRequest,
   CloudError,
+  getCloudAvailability,
+  listCloudProviders,
   readCloud,
+  saveCloudAvailability,
   writeCloud,
   type CloudSnapshot,
   type CareSpace,
 } from "./cloud-api";
 import { ClinicContext } from "./store";
-import { StartupLoader } from "./branding";
 import { clearMedicineReminders } from "./reminder-service";
+import { clearFamilyCache } from "./family/family-api";
+import { clearSelectedOrganization, clearWorkspaceRequests } from "./organizations";
 import { setAuthFlow } from "./auth-flow";
 import {
   markReminderRegistration,
   revokeServerReminders,
 } from "./cloud-reminders";
+
+async function readAssetBody(asset: {
+  uri: string;
+  file?: globalThis.File;
+}) {
+  if (Platform.OS === "web") return asset.file;
+  try {
+    return await new File(asset.uri).bytes();
+  } catch {
+    const res = await fetch(asset.uri);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+}
 
 export function CloudClinicProvider({
   children,
@@ -33,7 +51,7 @@ export function CloudClinicProvider({
   children: React.ReactNode;
 }) {
   const auth = useAuth();
-  if (!auth.isLoaded) return <StartupLoader />;
+  if (!auth.isLoaded) return null;
   return (
     <CloudUserStore key={auth.userId || "signed-out"}>
       {children}
@@ -50,6 +68,7 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
   const [spaces, setSpaces] = useState<CareSpace[]>([]);
   const [spaceId, setSpaceId] = useState("");
   const [recordsAccessible, setRecordsAccessible] = useState(false);
+  const [doctorApproved, setDoctorApproved] = useState(false);
   const base = useRef<CloudSnapshot | null>(null);
   const pending = useRef<{ action: Action; operationId: string }[]>([]);
   const processing = useRef(false);
@@ -66,11 +85,24 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
     if (!value) throw new Error("Sign in again to continue.");
     return value;
   }, []);
+  const applyOptimistic = (
+    current: ClinicState,
+    action: Action,
+    operationId: string,
+  ) => {
+    const input =
+      action.type === "book" &&
+      !current.approved.includes(action.visit.providerId) &&
+      findProvider(action.visit.providerId)?.verified
+        ? { ...current, approved: [...current.approved, action.visit.providerId] }
+        : current;
+    return cloudTransition(input, action, operationId);
+  };
   const publish = () => {
     if (!base.current) return;
     let next = base.current.state;
     for (const entry of pending.current)
-      next = cloudTransition(next, entry.action, entry.operationId);
+      next = applyOptimistic(next, entry.action, entry.operationId);
     setState(next);
   };
   const load = useCallback(
@@ -84,6 +116,15 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
         setError("");
         const available = await cloudRequest<CareSpace[]>(jwt, "/v1/spaces");
         const audience = selected ? null : await getLoginAudience();
+        let isDoctorApproved = available.some((space) => space.role === "Doctor");
+        if (!isDoctorApproved && audience === "Doctor") {
+          const verification = await cloudRequest<{
+            applications?: { kind: string; status: string }[];
+          }>(jwt, "/v1/verification").catch(() => null);
+          isDoctorApproved = !!verification?.applications?.some(
+            (app) => app.kind === "Doctor" && app.status === "Approved",
+          );
+        }
         const preferred =
           selected ||
           available.find((space) => space.role === audience)?.id ||
@@ -99,6 +140,7 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
         pending.current = [];
         setState(snapshot.state);
         setRecordsAccessible(snapshot.recordsAccess === true);
+        setDoctorApproved(isDoctorApproved);
         setSpaceId(snapshot.spaceId);
         setSpaces(available);
         setStatus("Synced");
@@ -216,7 +258,7 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
       const entry = { action, operationId: randomUUID() };
       let next = base.current.state;
       for (const queued of [...pending.current, entry])
-        next = cloudTransition(next, queued.action, queued.operationId);
+        next = applyOptimistic(next, queued.action, queued.operationId);
       pending.current.push(entry);
       setState(next);
       void drain();
@@ -245,7 +287,7 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
           Authorization: "Bearer " + (await token()),
           "Content-Type": asset.mimeType || "application/octet-stream",
         },
-        body: Platform.OS === "web" ? asset.file : new File(asset.uri),
+        body: await readAssetBody(asset),
       },
     );
     const result = await response.json();
@@ -341,8 +383,7 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
                     "Content-Type":
                       asset.mimeType || "application/octet-stream",
                   },
-                  body:
-                    Platform.OS === "web" ? asset.file : new File(asset.uri),
+                  body: await readAssetBody(asset),
                 },
               );
               const result = await response.json();
@@ -388,6 +429,7 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
             },
           },
           status,
+          doctorApproved,
           recordsAccessible,
           error,
           spaces,
@@ -415,6 +457,9 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
             try {
               await revokeServerReminders(await token());
               await clearMedicineReminders();
+              await clearFamilyCache();
+              await clearSelectedOrganization();
+              await clearWorkspaceRequests();
               await auth.signOut();
               setAuthFlow({ busy: false, error: "" });
               base.current = null;
@@ -482,6 +527,13 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
                 "/history?space=" +
                 encodeURIComponent(spaceId),
             ),
+          providers: async (query) => listCloudProviders(await token(), query),
+          availability: {
+            get: async (providerId) =>
+              getCloudAvailability(await token(), providerId),
+            save: async (schedule) =>
+              saveCloudAvailability(await token(), schedule),
+          },
           upload,
           download,
         },

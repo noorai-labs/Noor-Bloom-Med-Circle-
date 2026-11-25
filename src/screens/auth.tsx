@@ -20,7 +20,7 @@ import {
 import { useClinic } from "../store";
 import { cloudMode } from "../cloud-config";
 import { GoogleLogin } from "./google-login";
-import { doctors, nurses, Role } from "../clinic";
+import { doctors, nurses, Role, validateProfile } from "../clinic";
 import {
   Avatar,
   Body,
@@ -280,15 +280,7 @@ function DemoAuthScreen() {
           }}
           onHelpPress={() => setHelpOpen(true)}
           footerNote="Local demo · Fictional data only"
-        >
-          {(role === "Doctor" || role === "Nurse") && (
-            <StaffProfileSelector
-              kind={role}
-              providerId={providerId}
-              onSelect={setProviderId}
-            />
-          )}
-        </AuthSignInShell>
+        />
       ) : (
         <>
           <AuthBrandHeader />
@@ -350,14 +342,6 @@ function DemoAuthScreen() {
                 <>
                   {creatingAccount && role !== "Patient" && (
                     <PortalRoleGrid role={role} onSelect={selectRole} />
-                  )}
-
-                  {(role === "Doctor" || role === "Nurse") && (
-                    <StaffProfileSelector
-                      kind={role}
-                      providerId={providerId}
-                      onSelect={setProviderId}
-                    />
                   )}
                   <Field
                     label={details.emailLabel}
@@ -546,7 +530,7 @@ function DemoAuthScreen() {
                 label={
                   creatingAccount
                     ? "Sign in with an existing account"
-                    : "Create a BLOOM MED account"
+                    : "Create a MedBloom account"
                 }
                 onPress={() => {
                   setCreatingAccount(!creatingAccount);
@@ -557,7 +541,7 @@ function DemoAuthScreen() {
                 <Text style={{ fontSize: 13, color: theme.muted }}>
                   {creatingAccount
                     ? "Already have an account? "
-                    : "New to BLOOM MED? "}
+                    : "New to MedBloom? "}
                   <Text style={{ color: theme.green, fontWeight: "700" }}>
                     {creatingAccount ? "Sign in" : "Create account"}
                   </Text>
@@ -604,7 +588,7 @@ function DemoAuthScreen() {
                 </Body>
                 <Body muted>
                   In cloud mode, use the same Google account or verified email
-                  address you originally used with BLOOM MED.
+                  address you originally used with MedBloom.
                 </Body>
               </View>
             </ScrollView>
@@ -623,8 +607,11 @@ function DemoAuthScreen() {
 export function ProfileForm({ onboarding = false }: { onboarding?: boolean }) {
   const { state, dispatch, notify } = useClinic();
   const [profile, setProfile] = useState(state.profile);
-  const set = (key: keyof typeof profile, value: string | boolean) =>
+  const [formError, setFormError] = useState("");
+  const set = (key: keyof typeof profile, value: string | boolean) => {
+    setFormError("");
     setProfile((p) => ({ ...p, [key]: value }));
+  };
   return (
     <Screen
       title={onboarding ? "Make yourself at home" : "Edit your health profile"}
@@ -690,18 +677,45 @@ export function ProfileForm({ onboarding = false }: { onboarding?: boolean }) {
           ),
         )}
       </Card>
+      {!!formError && (
+        <View
+          style={{
+            backgroundColor: "#FEF2F2",
+            borderColor: "#FECACA",
+            borderWidth: 1,
+            borderRadius: 12,
+            padding: 12,
+          }}
+        >
+          <Text style={{ color: "#DC2626", fontSize: 13, fontWeight: "600" }}>
+            {formError}
+          </Text>
+        </View>
+      )}
       <Button
         title={onboarding ? "Let’s begin" : "Save profile"}
         icon="checkmark"
         onPress={() => {
-          if (dispatch({ type: "profile", profile, onboarding })) {
-            notify("Your profile is saved.");
+          const check = validateProfile(profile.name, profile.age);
+          if (!check.valid) {
+            setFormError(check.error);
+            notify(check.error);
+            return;
+          }
+          const cleaned = {
+            ...profile,
+            name: check.name,
+            age: check.age,
+          };
+          setProfile(cleaned);
+          if (dispatch({ type: "profile", profile: cleaned, onboarding })) {
+            notify("Your data is secure.");
             router.replace("/(tabs)");
           }
         }}
       />
       <Body muted>
-        Language preference is saved; the demo interface is in English.
+        Your data is secure.
       </Body>
     </Screen>
   );

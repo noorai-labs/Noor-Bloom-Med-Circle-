@@ -31,7 +31,17 @@ export type CloudControls = {
     download: (id: string) => Promise<string>;
   };
   reminders: import("./cloud-reminders").CloudReminderControls;
+  providers: (
+    query?: import("./cloud-api").ProvidersQuery,
+  ) => Promise<import("./cloud-api").ProvidersResponse>;
+  availability: {
+    get: (providerId?: string) => Promise<import("./cloud-api").AvailabilityResponse>;
+    save: (
+      schedule: import("./cloud-api").AvailabilityDay[],
+    ) => Promise<import("./cloud-api").AvailabilityResponse>;
+  };
   status: string;
+  doctorApproved?: boolean;
   recordsAccessible: boolean;
   error: string;
   spaces: import("./cloud-api").CareSpace[];

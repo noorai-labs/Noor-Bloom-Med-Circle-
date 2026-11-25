@@ -596,7 +596,7 @@ export function RoleChooserModal({
                 Choose your care role
               </Text>
               <Text style={{ fontSize: 13, color: theme.muted, marginTop: 2 }}>
-                Experience BLOOM MED from any perspective.
+                Experience MedBloom from any perspective.
               </Text>
             </View>
             <Touch
@@ -813,13 +813,13 @@ export function AuthSignInShell({
 
       <View style={{ alignItems: "center", gap: 4 }}>
         <Touch
-          label="Create a BLOOM MED account"
+          label="Create a MedBloom account"
           disabled={disabled}
           onPress={onCreateAccountPress}
           style={{ paddingVertical: 8, paddingHorizontal: 14 }}
         >
           <Text style={{ fontSize: 13, color: theme.muted }}>
-            New to BLOOM MED?{" "}
+            New to MedBloom?{" "}
             <Text style={{ color: theme.green, fontWeight: "700" }}>
               Create account
             </Text>

@@ -1,5 +1,5 @@
 export const brand = {
-  name: "BLOOM MED",
+  name: "MedBloom",
   company: "NoorAI Labs",
   tagline: "Better care. Closer to home.",
 };

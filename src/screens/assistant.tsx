@@ -2,7 +2,7 @@ import { cloudMode } from "../cloud-config";
 import { providerFor } from "../provider-display";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useClinic } from "../store";
 import { formatDate, visibleVisits } from "../clinic";
 import {
@@ -17,17 +17,84 @@ import {
   styles,
   theme,
   Title,
+  Touch,
 } from "../components";
-import { VoicePoweredOrb, VoiceOrbModal } from "../voice-orb";
+import { VoicePoweredOrb } from "../voice-orb";
+import { GeminiVoiceOverlay } from "../components/gemini-voice-overlay";
+
 export default function AssistantScreen() {
+  const [showVoiceOverlay, setShowVoiceOverlay] = useState(true);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      setShowVoiceOverlay(true);
+    }, []),
+  );
+
+  const handleClose = () => {
+    setShowVoiceOverlay(false);
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/(tabs)");
+    }
+  };
+
   if (cloudMode)
     return (
       <Screen title="Care navigation">
+        <GeminiVoiceOverlay
+          visible={showVoiceOverlay}
+          onClose={handleClose}
+        />
+        <Touch
+          label="Open Bloom Voice Assistant"
+          onPress={() => setShowVoiceOverlay(true)}
+        >
+          <Card
+            style={{
+              backgroundColor: "#070C14",
+              borderWidth: 1,
+              borderColor: "rgba(0, 242, 254, 0.3)",
+              marginBottom: 16,
+            }}
+          >
+            <View style={styles.row}>
+              <View
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: "rgba(0, 242, 254, 0.15)",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Icon name="sparkles" color="#00F2FE" size={22} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontWeight: "700",
+                    color: "#F8FAFC",
+                    marginBottom: 2,
+                  }}
+                >
+                  Bloom Voice AI
+                </Text>
+                <Text style={{ fontSize: 13, color: "#94A3B8" }}>
+                  Tap to launch Gemini-style voice companion
+                </Text>
+              </View>
+              <Icon name="chevron-forward" color="#00F2FE" />
+            </View>
+          </Card>
+        </Touch>
         <Card>
           <Title small>Open your care workspace</Title>
           <Body>
-            Use your appointments, records and medicines directly. The assistant
-            is not connected.
+            Use your appointments, records and medicines directly.
           </Body>
           <Button
             title="Open appointments"
@@ -41,9 +108,19 @@ export default function AssistantScreen() {
         </Card>
       </Screen>
     );
-  return <DemoAssistantScreen />;
+
+  return (
+    <>
+      <GeminiVoiceOverlay
+        visible={showVoiceOverlay}
+        onClose={handleClose}
+      />
+      <DemoAssistantScreen onOpenVoice={() => setShowVoiceOverlay(true)} />
+    </>
+  );
 }
-function DemoAssistantScreen() {
+
+function DemoAssistantScreen({ onOpenVoice }: { onOpenVoice: () => void }) {
   const { state } = useClinic();
   const [messages, setMessages] = useState([
     {
@@ -53,14 +130,15 @@ function DemoAssistantScreen() {
   ]);
   const [text, setText] = useState("");
   const [thinking, setThinking] = useState(false);
-  const [voice, setVoice] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
     },
     [],
   );
+
   function send(value: string) {
     if (!value.trim() || thinking) return;
     const t = value.toLowerCase();
@@ -105,11 +183,58 @@ function DemoAssistantScreen() {
       setThinking(false);
     }, 650);
   }
+
   return (
     <Screen
       title="A little help from Bloom"
       subtitle="Your companion for navigating care."
     >
+      <Touch label="Launch Bloom Voice AI" onPress={onOpenVoice}>
+        <Card
+          style={{
+            backgroundColor: "#070C14",
+            borderWidth: 1,
+            borderColor: "rgba(0, 242, 254, 0.35)",
+            shadowColor: "#00F2FE",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.25,
+            shadowRadius: 8,
+            elevation: 4,
+          }}
+        >
+          <View style={styles.row}>
+            <View
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 22,
+                backgroundColor: "rgba(0, 242, 254, 0.15)",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Icon name="sparkles" color="#00F2FE" size={22} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text
+                style={{
+                  fontSize: 16,
+                  fontWeight: "700",
+                  color: "#F8FAFC",
+                  marginBottom: 2,
+                }}
+              >
+                Bloom Voice AI
+              </Text>
+              <Text style={{ fontSize: 13, color: "#94A3B8" }}>
+                Tap to open the voice assistant with audio ribbons
+              </Text>
+            </View>
+            <Icon name="chevron-forward" color="#00F2FE" />
+          </View>
+        </Card>
+      </Touch>
+
       <Card style={{ backgroundColor: theme.blue }}>
         <View style={styles.row}>
           <Icon name="sparkles-outline" color="#557EB9" />
@@ -121,6 +246,7 @@ function DemoAssistantScreen() {
           </View>
         </View>
       </Card>
+
       {messages.map((m, i) => (
         <View
           key={i}
@@ -147,6 +273,7 @@ function DemoAssistantScreen() {
           </Text>
         </View>
       ))}
+
       {thinking && (
         <SlideDownFade duration={300} distance={8}>
           <View
@@ -170,6 +297,7 @@ function DemoAssistantScreen() {
           </View>
         </SlideDownFade>
       )}
+
       <View style={styles.wrap}>
         {[
           "My next appointment",
@@ -180,6 +308,7 @@ function DemoAssistantScreen() {
           <Chip key={t} title={t} onPress={() => send(t)} />
         ))}
       </View>
+
       <Field
         label="Message Bloom"
         value={text}
@@ -190,6 +319,7 @@ function DemoAssistantScreen() {
           onSubmitEditing: () => send(text),
         }}
       />
+
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
           <Button
@@ -199,14 +329,9 @@ function DemoAssistantScreen() {
             onPress={() => send(text)}
           />
         </View>
-        <VoicePoweredOrb size={52} bg="#F6F8FA" onPress={() => setVoice(true)} />
+        <VoicePoweredOrb size={52} bg="#F6F8FA" onPress={onOpenVoice} />
       </View>
-      <VoiceOrbModal
-        visible={voice}
-        onClose={() => setVoice(false)}
-        onCommand={(cmd) => send(cmd)}
-        language={state.profile.language}
-      />
+
       <Title small>Take the next step</Title>
       <View style={styles.wrap}>
         <Chip title="Find care →" onPress={() => router.push("/discover")} />

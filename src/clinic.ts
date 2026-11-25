@@ -294,6 +294,43 @@ function ownVisit(s: ClinicState, visitId: string) {
     throw new Error("This visit belongs to another care professional.");
   return visit;
 }
+export function validateProfile(
+  name: string,
+  age: string,
+):
+  | { valid: true; name: string; age: string }
+  | { valid: false; error: string } {
+  const trimmedName = name.trim();
+  const trimmedAge = age.trim();
+  const hasDigitsInName = /\d/.test(trimmedName);
+  const nameInvalid = !trimmedName || hasDigitsInName;
+
+  const isWholeNumber = /^\d+$/.test(trimmedAge);
+  const numericAge = isWholeNumber ? Number(trimmedAge) : NaN;
+  const ageInvalid =
+    !isWholeNumber ||
+    !Number.isInteger(numericAge) ||
+    numericAge < 1 ||
+    numericAge > 120;
+
+  if (nameInvalid && ageInvalid) {
+    return {
+      valid: false,
+      error: "Enter a valid full name (no digits) and age from 1 to 120.",
+    };
+  }
+  if (!trimmedName) {
+    return { valid: false, error: "Enter your full name." };
+  }
+  if (hasDigitsInName) {
+    return { valid: false, error: "Full name cannot contain numbers." };
+  }
+  if (ageInvalid) {
+    return { valid: false, error: "Enter a whole-number age from 1 to 120." };
+  }
+  return { valid: true, name: trimmedName, age: String(numericAge) };
+}
+
 export function transition(
   s: ClinicState,
   a: Action,
@@ -308,15 +345,14 @@ export function transition(
   if (a.type === "session") return { ...s, session: a.session };
   if (a.type === "profile") {
     requireAccess(s, ["Patient"]);
-    if (
-      !a.profile.name.trim() ||
-      !/^\d+$/.test(a.profile.age) ||
-      +a.profile.age < 1 ||
-      +a.profile.age > 120
-    )
-      throw new Error("Enter a name and an age from 1 to 120.");
+    const check = validateProfile(a.profile.name, a.profile.age);
+    if (!check.valid) throw new Error(check.error);
     return activity(
-      { ...s, profile: a.profile, onboarded: a.onboarding || s.onboarded },
+      {
+        ...s,
+        profile: { ...a.profile, name: check.name, age: check.age },
+        onboarded: a.onboarding || s.onboarded,
+      },
       "Profile updated",
       a.profile.consent
         ? "Family access is enabled."

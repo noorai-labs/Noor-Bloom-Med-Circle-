@@ -5,6 +5,10 @@ import { Text, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
 import { BloomLogo } from "../branding";
+import { useVoiceAgent } from "../components/bloom-voice-agent";
+import { ShinyButton } from "../components/shiny-button";
+import { cloudMode } from "../cloud-config";
+import { useLoginAudience } from "../login-audience";
 import { canRead, dayKey, formatDate, visibleVisits } from "../clinic";
 import {
   Avatar,
@@ -69,23 +73,31 @@ export function VisitCard({
   );
 }
 export default function HomeScreen() {
-  const { state } = useClinic();
-  return state.session?.role === "Doctor" ? (
-    <DoctorHome />
-  ) : (
-    <GeneralHomeScreen />
-  );
+  const { state, cloud } = useClinic();
+  const { audience } = useLoginAudience();
+  const isDoctor =
+    state.session?.role === "Doctor" ||
+    (cloudMode && audience === "Doctor" && !!cloud?.doctorApproved);
+  return isDoctor ? <DoctorHome /> : <GeneralHomeScreen />;
 }
 function GeneralHomeScreen() {
-  const { state } = useClinic();
+  const { state, ready, dispatch, notify } = useClinic();
+  const { openVoiceAgent } = useVoiceAgent();
   const role = state.session?.role || "Patient";
   const personal = ["Patient", "Family"].includes(role);
+  const todayKey = dayKey();
   const visits = visibleVisits(state);
-  const next = visits.find(
-    (v) => !["Completed", "Cancelled"].includes(v.status),
-  );
+  const next = visits
+    .filter(
+      (v) => !["Completed", "Cancelled"].includes(v.status) && v.date >= todayKey,
+    )
+    .sort((a, b) => (a.date + " " + a.time).localeCompare(b.date + " " + b.time))[0];
   const meds = state.medicines.filter((m) => m.active);
-  const taken = meds.filter((m) => m.logs[dayKey()] === "Taken").length;
+  const pendingMeds = meds
+    .filter((m) => !m.logs[todayKey])
+    .sort((a, b) => a.time.localeCompare(b.time));
+  const pendingMed = pendingMeds[0];
+  const taken = meds.filter((m) => m.logs[todayKey] === "Taken").length;
   const unread = state.activities.filter((n) => !n.read).length;
   const provider = providers.find((p) => p.id === state.session?.providerId);
   return (
@@ -102,7 +114,7 @@ function GeneralHomeScreen() {
                 color: theme.ink,
               }}
             >
-              BLOOM MED
+              MedBloom
             </Text>
             <Text style={{ fontSize: 10, color: theme.muted }}>
               Your care, connected
@@ -131,16 +143,18 @@ function GeneralHomeScreen() {
             )}
           </Touch>
           {personal && (
-            <Touch
-              label="Emergency SOS"
+            <ShinyButton
+              label="SOS"
+              accessibilityLabel="Emergency SOS"
+              compact
+              fillColor="#DC2626"
+              accentColor="#FF5F00"
+              accentSoftColor="#FF9253"
+              sweepDuration={2800}
+              cornerRadius={20}
+              icon={<Icon name="alert-circle" color="white" size={15} />}
               onPress={() => router.push("/sos")}
-              style={[
-                styles.iconButton,
-                { backgroundColor: "#FDEEF1", borderColor: "#FDEEF1" },
-              ]}
-            >
-              <Icon name="shield-outline" color={theme.red} />
-            </Touch>
+            />
           )}
         </View>
       </View>
@@ -176,27 +190,133 @@ function GeneralHomeScreen() {
       {!canRead(state) ? (
         <Empty
           title="A little consent goes a long way"
-          body="The patient can enable family access in their Profile. Switch roles to demonstrate consent."
+          body="Connect with a patient invite code or wait for the patient to enable family access."
           icon="lock-closed-outline"
-          action="Open profile"
-          onPress={() => router.push("/(tabs)/profile")}
+          action="Family linking & consent"
+          onPress={() => router.push("/family-consent")}
         />
       ) : (
         <>
           {personal ? (
             <>
-              <Hero
-                eyebrow="CARE THAT COMES TO YOU"
-                title={"Better care.\nRight at home."}
-                body="Find a doctor who listens. Get the support you need, where you feel most comfortable."
-                button="Find your doctor"
-                onPress={() =>
-                  router.push({
-                    pathname: "/discover",
-                    params: { kind: "doctor" },
-                  })
-                }
-              />
+              {!ready ? (
+                <Card
+                  style={{
+                    backgroundColor: theme.green,
+                    borderRadius: 24,
+                    padding: 22,
+                    gap: 12,
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 120,
+                      height: 12,
+                      borderRadius: 6,
+                      backgroundColor: "rgba(255,255,255,0.22)",
+                    }}
+                  />
+                  <View
+                    style={{
+                      width: "75%",
+                      height: 24,
+                      borderRadius: 8,
+                      backgroundColor: "rgba(255,255,255,0.28)",
+                    }}
+                  />
+                  <View
+                    style={{
+                      width: "90%",
+                      height: 14,
+                      borderRadius: 6,
+                      backgroundColor: "rgba(255,255,255,0.18)",
+                    }}
+                  />
+                  <View
+                    style={{
+                      width: 160,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: "rgba(255,255,255,0.3)",
+                      marginTop: 4,
+                    }}
+                  />
+                </Card>
+              ) : next ? (
+                (() => {
+                  const isRequested = next.status === "Requested";
+                  const isConfirmedVideo =
+                    next.service === "Online Consultation" &&
+                    ["Confirmed", "In Progress"].includes(next.status);
+                  const doctorName = providerFor(next).name;
+                  return (
+                    <Hero
+                      eyebrow={
+                        isRequested
+                          ? "AWAITING CONFIRMATION"
+                          : isConfirmedVideo
+                            ? "ONLINE CONSULTATION"
+                            : "UPCOMING CONSULTATION"
+                      }
+                      title={doctorName}
+                      body={
+                        isRequested
+                          ? `${next.service} requested for ${formatDate(next.date)} at ${next.time}. Awaiting confirmation from your care team.`
+                          : `${next.service} scheduled for ${formatDate(next.date)} at ${next.time}. Prepare your medical questions and records.`
+                      }
+                      button={
+                        isConfirmedVideo ? "Join consultation" : "Open appointment"
+                      }
+                      onPress={() =>
+                        isConfirmedVideo
+                          ? router.push({
+                              pathname: "/consultation-call",
+                              params: { visitId: next.id },
+                            })
+                          : router.push({
+                              pathname: "/visit/[id]",
+                              params: { id: next.id },
+                            })
+                      }
+                    />
+                  );
+                })()
+              ) : pendingMed ? (
+                <Hero
+                  eyebrow={
+                    pendingMeds.length > 1
+                      ? `DOSE DUE TODAY · ${pendingMeds.length} PENDING`
+                      : "DOSE DUE TODAY"
+                  }
+                  title={`${pendingMed.name} (${pendingMed.dosage})`}
+                  body={`Scheduled for ${pendingMed.time}. Tap below to mark this dose as taken.`}
+                  button="Mark taken"
+                  onPress={() => {
+                    if (
+                      dispatch({
+                        type: "dose",
+                        medicineId: pendingMed.id,
+                        status: "Taken",
+                      })
+                    ) {
+                      notify(`${pendingMed.name} marked as taken.`);
+                    }
+                  }}
+                />
+              ) : (
+                <Hero
+                  eyebrow="CARE THAT COMES TO YOU"
+                  title={"Better care.\nRight at home."}
+                  body="Find a doctor who listens. Get the support you need, where you feel most comfortable."
+                  button="Find your doctor"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/discover",
+                      params: { kind: "doctor" },
+                    })
+                  }
+                />
+              )}
               <Section title="What do you need today?" />
               <View style={styles.wrap}>
                 {(
@@ -247,7 +367,7 @@ function GeneralHomeScreen() {
                             })
                           : a.href === "medicines"
                             ? router.push("/medicines")
-                            : router.push("/(tabs)/assistant")
+                            : openVoiceAgent()
                       }
                     >
                       <Card style={{ padding: 18 }}>
