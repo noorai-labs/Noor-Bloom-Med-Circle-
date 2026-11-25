@@ -55,7 +55,7 @@ const STANDALONE_STOP_COMMANDS = new Set([
 function isStandaloneStopCommand(text: string): boolean {
   const normalized = text
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
   return STANDALONE_STOP_COMMANDS.has(normalized);
@@ -137,6 +137,7 @@ export function VoiceModal({
   const turnGenRef = useRef(0);
   const pendingNavTokenRef = useRef(0);
   const mountedRef = useRef(true);
+  const isHandoffNavigationRef = useRef(false);
 
   const cancelPendingNavigation = useCallback(() => {
     pendingNavTokenRef.current++;
@@ -260,18 +261,25 @@ export function VoiceModal({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      stopAll(false);
+      if (!isHandoffNavigationRef.current) {
+        stopAll(false);
+      }
     };
   }, [stopAll]);
 
   // Cancel any live session / pending nav if parent hides the modal externally
   useEffect(() => {
     if (!visible) {
+      if (isHandoffNavigationRef.current) {
+        isHandoffNavigationRef.current = false;
+        return;
+      }
       stopAll(false);
     }
   }, [visible, stopAll]);
 
   function handleNavigate(route: string) {
+    isHandoffNavigationRef.current = false;
     stopAll(false);
     onClose();
     router.push(route as any);
@@ -375,6 +383,7 @@ export function VoiceModal({
                 return;
               }
               navigationTimerRef.current = null;
+              isHandoffNavigationRef.current = true;
               stopAll(true);
               onClose();
               router.push(target as any);
@@ -436,6 +445,7 @@ export function VoiceModal({
   }
 
   async function startLiveSession() {
+    isHandoffNavigationRef.current = false;
     stopAll(false);
     const capturedSession = sessionGenRef.current;
 
@@ -444,7 +454,7 @@ export function VoiceModal({
     setErrorMsg("");
     errorMsgRef.current = "";
     setAudioNotice("");
-    setStatus("listening");
+    setStatus("processing");
 
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -527,6 +537,12 @@ export function VoiceModal({
     );
 
     if (
+      started &&
+      mountedRef.current &&
+      capturedSession === sessionGenRef.current
+    ) {
+      setStatus("listening");
+    } else if (
       !started &&
       mountedRef.current &&
       capturedSession === sessionGenRef.current

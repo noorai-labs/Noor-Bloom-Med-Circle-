@@ -44,6 +44,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   private backendClient: VoiceBackendClient | null = null;
   private activeAudio: HTMLAudioElement | null = null;
   private activePlaybackTimeout: ReturnType<typeof setTimeout> | null = null;
+  private activePlaybackCleanup: ((synthesized: boolean) => void) | null = null;
   private activeAbortController: AbortController | null = null;
   private speechGeneration = 0;
 
@@ -148,6 +149,10 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
           if (finished) return;
           finished = true;
 
+          if (this.activePlaybackCleanup === done) {
+            this.activePlaybackCleanup = null;
+          }
+
           if (fallbackTimer) {
             clearTimeout(fallbackTimer);
             fallbackTimer = null;
@@ -166,6 +171,8 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
             durationMs: synthesized ? 1500 : 0,
           });
         };
+
+        this.activePlaybackCleanup = done;
 
         audio.onended = () => done(true);
         audio.onerror = () => done(false);
@@ -197,6 +204,12 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
   stopSpeaking(): void {
     this.speechGeneration++;
     this.isSpeaking = false;
+
+    if (this.activePlaybackCleanup) {
+      const cleanup = this.activePlaybackCleanup;
+      this.activePlaybackCleanup = null;
+      cleanup(false);
+    }
 
     if (this.activeAbortController) {
       try {
@@ -258,7 +271,8 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
 
     try {
       // 1. Acquire short-lived Deepgram token and microphone permission BEFORE opening WebSocket
-      const [tokenResult, acquiredStream] = await Promise.all([
+      // Uses allSettled to ensure that if token fetch fails, any resolved MediaStream is not orphaned.
+      const [tokenOutcome, streamOutcome] = await Promise.allSettled([
         this.backendClient.sttToken(),
         navigator.mediaDevices.getUserMedia({
           audio: {
@@ -269,17 +283,36 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         }),
       ]);
 
-      stream = acquiredStream;
-      accessToken = tokenResult.accessToken;
+      if (streamOutcome.status === "fulfilled") {
+        stream = streamOutcome.value;
+      }
+
+      if (tokenOutcome.status === "rejected") {
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+          stream = null;
+        }
+        throw tokenOutcome.reason;
+      }
+
+      if (streamOutcome.status === "rejected") {
+        throw streamOutcome.reason;
+      }
+
+      accessToken = tokenOutcome.value.accessToken;
 
       // Cancel cleanly if modal closed or another session superseded while awaiting permissions/token
       if (sessionId !== this.liveSessionId) {
-        stream.getTracks().forEach((track) => track.stop());
+        if (stream) {
+          stream.getTracks().forEach((track) => track.stop());
+          stream = null;
+        }
         return false;
       }
     } catch (err: any) {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
+        stream = null;
       }
       if (sessionId === this.liveSessionId) {
         const message =
@@ -288,6 +321,10 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
             : err?.message || "Could not access microphone or speech token.";
         callbacks?.onError?.(message);
       }
+      return false;
+    }
+
+    if (!stream) {
       return false;
     }
 
@@ -479,8 +516,9 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         if (sessionId === this.liveSessionId && !settled) {
           failAndCleanup("Speech connection closed before recording started.");
         } else if (sessionId === this.liveSessionId) {
-          // Unexpected drop mid-session: release mic and VAD resources cleanly
+          // Unexpected drop mid-session: release mic and VAD resources cleanly and alert UI
           this.stopLiveWebSocketSession(true);
+          callbacks?.onError?.("Speech connection was lost. Please tap to reconnect.");
         }
       };
     });

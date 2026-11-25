@@ -400,6 +400,138 @@ const consultRes = evaluatePatientKnowledge(
 );
 assert.equal(consultRes.spokenResponse.includes("Low-salt diet"), true);
 
+// J. Code Review Edge Cases & Regressions
+// 1. Home visit routing: query vs booking
+const homeVisitQuery = resolveVoiceIntent("When is my next home visit?", "en-IN");
+assert.equal(homeVisitQuery.intent, "QUERY_NEXT_APPOINTMENT");
+assert.equal(homeVisitQuery.targetRoute, "/(tabs)/appointments");
+
+const homeVisitBook = resolveVoiceIntent("Book a home visit", "en-IN");
+assert.equal(homeVisitBook.intent, "NAVIGATE_BOOKING");
+assert.equal(homeVisitBook.targetRoute, "/discover");
+
+const contextHomeVisitQuery = evaluatePatientKnowledge(
+  "When is my next home visit?",
+  "en-IN",
+  mockClinicState,
+);
+assert.equal(contextHomeVisitQuery.intent, "QUERY_NEXT_APPOINTMENT");
+assert.equal(contextHomeVisitQuery.targetRoute, "/(tabs)/appointments");
+
+// 2. Treatment refusal on "pain" and "which medicine should I take"
+const painQuery = evaluatePatientKnowledge(
+  "Which medicine should I take for pain?",
+  "en-IN",
+  mockClinicState,
+);
+assert.equal(painQuery.intent, "MEDICAL_QUERY_REFUSAL");
+assert.equal(painQuery.isMedicalQuery, true);
+assert.equal(painQuery.targetRoute, undefined);
+
+const painRefusalAdapter = resolveVoiceIntent(
+  "Which medicine should I take for pain?",
+  "en-IN",
+);
+assert.equal(painRefusalAdapter.intent, "MEDICAL_QUERY_REFUSAL");
+
+// 3. Explicit medicine utterance overrides previous follow-up medicine
+const followUpOverride = evaluatePatientKnowledge(
+  "When should I take Metformin?",
+  "en-IN",
+  mockClinicState,
+  [
+    {
+      user: "Tell me about Atorvastatin",
+      bloom: "Atorvastatin schedule",
+      medicineId: "m2",
+    },
+  ],
+);
+assert.equal(followUpOverride.highlightData.includes("Metformin"), true);
+assert.equal(
+  followUpOverride.spokenResponse.includes("Metformin"),
+  true,
+  "Must evaluate Metformin, not Atorvastatin",
+);
+
+// Anonymous follow-up still correctly resolves to Atorvastatin
+const followUpPreserved = evaluatePatientKnowledge(
+  "When should I take it?",
+  "en-IN",
+  mockClinicState,
+  [
+    {
+      user: "Tell me about Atorvastatin",
+      bloom: "Atorvastatin schedule",
+      medicineId: "m2",
+    },
+  ],
+);
+assert.equal(followUpPreserved.spokenResponse.includes("Atorvastatin"), true);
+
+// 4. Negated breathing statement must not trigger SOS
+const negatedHindiBreathing = evaluatePatientKnowledge(
+  "सांस लेने में कोई परेशानी नहीं है",
+  "hi-IN",
+  mockClinicState,
+);
+assert.notEqual(negatedHindiBreathing.intent, "EMERGENCY_SOS");
+
+const distressHindiBreathing = evaluatePatientKnowledge(
+  "सांस लेने में बहुत तकलीफ हो रही है",
+  "hi-IN",
+  mockClinicState,
+);
+assert.equal(distressHindiBreathing.intent, "EMERGENCY_SOS");
+assert.equal(distressHindiBreathing.targetRoute, "/sos");
+
+// 5. Elapsed appointments today are filtered out
+const pastTodayVisit = {
+  id: "v_today_past",
+  patientId: "p1",
+  doctorId: "d1",
+  doctorName: "Dr. Past",
+  service: "Early Consultation",
+  date: today,
+  time: "12:01 AM",
+  status: "Confirmed",
+};
+const futureTodayVisit = {
+  id: "v_today_future",
+  patientId: "p1",
+  doctorId: "d1",
+  doctorName: "Dr. Future",
+  service: "Evening Checkup",
+  date: today,
+  time: "11:59 PM",
+  status: "Confirmed",
+};
+const elapsedFilterState = {
+  ...mockClinicState,
+  visits: [pastTodayVisit, futureTodayVisit],
+};
+const apptFilteredRes = evaluatePatientKnowledge(
+  "When is my next appointment?",
+  "en-IN",
+  elapsedFilterState,
+);
+assert.equal(
+  apptFilteredRes.spokenResponse.includes("Evening Checkup"),
+  true,
+  "Must pick the upcoming appointment, not the elapsed one",
+);
+
+// 6. Indic stop command regex retains combining marks
+const testStopRegex = (text) =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+assert.equal(testStopRegex("रोको"), "रोको", "Devanagari matras must be preserved");
+assert.equal(testStopRegex("ಆಪು"), "ಆಪು", "Kannada vowel signs must be preserved");
+assert.equal(testStopRegex("நிறுத்து!"), "நிறுத்து", "Tamil pulli must be preserved");
+
 console.log(
-  "Voice pipeline prototype tests passed: intent priorities, multilingual Tamil/Telugu/Hindi/Kannada, word-level fuzzy matching, typed multi-turn safety, sorted future visits, and emergency checks.",
+  "Voice pipeline prototype tests passed: intent priorities, multilingual Tamil/Telugu/Hindi/Kannada, word-level fuzzy matching, typed multi-turn safety, sorted future visits, emergency checks, and code-review edge cases.",
 );

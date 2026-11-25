@@ -193,37 +193,61 @@ export function evaluatePatientKnowledge(
   const activeMeds = allMeds.filter((m) => m.active);
 
   // 1. EMERGENCY & SOS DISPATCH (Highest Priority Safety Guardrail)
-  // Matches distress symptoms AND explicit SOS requests, while avoiding benign breathing mentions.
+  // Matches distress symptoms AND explicit SOS requests, while avoiding benign or negated breathing mentions.
+  const isNegatedBreathing =
+    t.includes("कोई परेशानी नहीं") ||
+    t.includes("कोई तकलीफ नहीं") ||
+    t.includes("कोई दिक्कत नहीं") ||
+    t.includes("परेशानी नहीं") ||
+    t.includes("तकलीफ नहीं") ||
+    t.includes("दिक्कत नहीं") ||
+    t.includes("सांस ठीक") ||
+    t.includes("saans theek") ||
+    t.includes("no problem") ||
+    t.includes("no difficulty");
+
+  const hasBreathingDistress =
+    !isNegatedBreathing &&
+    (t.includes("cannot breathe") ||
+      t.includes("can't breathe") ||
+      t.includes("difficulty breathing") ||
+      t.includes("shortness of breath") ||
+      t.includes("ಉಸಿರಾಟದ ತೊಂದರೆ") ||
+      t.includes("ಉಸಿರಾಡಲು ಕಷ್ಟ") ||
+      ((t.includes("सांस") || t.includes("saans")) &&
+        (t.includes("तकलीफ") ||
+          t.includes("परेशानी") ||
+          t.includes("दिक्कत") ||
+          t.includes("कठिनाई") ||
+          t.includes("फूल") ||
+          t.includes("नहीं आ") ||
+          t.includes("रुक") ||
+          t.includes("takleef") ||
+          t.includes("pareshani") ||
+          t.includes("dikkat") ||
+          t.includes("kathinai") ||
+          t.includes("phool") ||
+          t.includes("nahi aa"))));
+
   const isEmergencyRequest =
+    hasBreathingDistress ||
     t.includes("emergency") ||
     t.includes("sos") ||
     t.includes("ambulance") ||
     t.includes("urgent help") ||
     t.includes("chest pain") ||
-    t.includes("cannot breathe") ||
-    t.includes("can't breathe") ||
-    t.includes("difficulty breathing") ||
-    t.includes("shortness of breath") ||
     t.includes("collapsed") ||
     t.includes("severe dizziness") ||
     t.includes("heart attack") ||
     // Hindi distress & emergency qualifiers
     t.includes("chhati me dard") ||
-    t.includes("saans phool") ||
-    t.includes("saans lene") ||
-    t.includes("saans nahi") ||
     t.includes("छाती में दर्द") ||
-    t.includes("सांस फूल") ||
-    t.includes("सांस लेने में") ||
-    t.includes("सांस नहीं") ||
     t.includes("आपातकाल") ||
     t.includes("आपातकालीन") ||
     t.includes("इमरजेंसी") ||
     t.includes("एम्बुलेंस") ||
     // Kannada distress & emergency qualifiers
     t.includes("ಎದೆ ನೋವು") ||
-    t.includes("ಉಸಿರಾಟದ ತೊಂದರೆ") ||
-    t.includes("ಉಸಿರಾಡಲು ಕಷ್ಟ") ||
     t.includes("ತುರ್ತು") ||
     t.includes("ಆಂಬ್ಯುಲೆನ್ಸ್") ||
     // Tamil & Telugu emergency qualifiers
@@ -265,25 +289,45 @@ export function evaluatePatientKnowledge(
   const isTreatmentQuery =
     t.includes("headache") ||
     t.includes("fever") ||
+    t.includes("pain") ||
     t.includes("what medicine should i take") ||
+    t.includes("which medicine should i take") ||
     t.includes("what should i take for") ||
+    t.includes("which should i take for") ||
+    t.includes("what to take for") ||
+    t.includes("which to take for") ||
+    t.includes("what medicine for") ||
+    t.includes("which medicine for") ||
     t.includes("cure") ||
     t.includes("diagnose") ||
     t.includes("symptom") ||
+    // Hindi
     t.includes("सिरदर्द") ||
     t.includes("बुखार") ||
+    t.includes("दर्द") ||
     t.includes("कौन सी दवा") ||
     t.includes("क्या दवा लूँ") ||
     t.includes("इलाज") ||
+    t.includes("sirdard") ||
+    t.includes("bukhar") ||
+    t.includes("dard") ||
+    // Kannada
+    t.includes("ತಲೆನೋವ") ||
     t.includes("ತಲೆನೋವು") ||
     t.includes("ಜ್ವರ") ||
+    t.includes("ನೋವ") ||
+    t.includes("ನೋವು") ||
     t.includes("ಯಾವ ಮಾತ್ರೆ") ||
     t.includes("ಚಿಕಿತ್ಸೆ") ||
+    // Tamil
     t.includes("தலைவலி") ||
     t.includes("காய்ச்சல்") ||
+    t.includes("வலி") ||
     t.includes("என்ன மாத்திரை") ||
+    // Telugu
     t.includes("తలనొప్పి") ||
     t.includes("జ్వరం") ||
+    t.includes("నొప్పి") ||
     t.includes("ఏ మందు");
 
   if (isTreatmentQuery) {
@@ -296,9 +340,16 @@ export function evaluatePatientKnowledge(
   }
 
   // 3. MULTI-TURN MEDICATION FOLLOW-UP (Requires verified active medicineId)
-  const followUpMed = lastTurn?.medicineId
-    ? activeMeds.find((m) => m.id === lastTurn.medicineId)
-    : undefined;
+  // Check if current utterance contains an explicit medicine name before defaulting to previous turn
+  const explicitMedLookup = findMatchingMedicine(transcript, allMeds);
+  const hasExplicitOrAmbiguousMed =
+    Boolean(explicitMedLookup.match) ||
+    explicitMedLookup.ambiguousMatches.length > 1;
+
+  const followUpMed =
+    !hasExplicitOrAmbiguousMed && lastTurn?.medicineId
+      ? activeMeds.find((m) => m.id === lastTurn.medicineId)
+      : undefined;
 
   if (
     followUpMed &&
@@ -338,21 +389,30 @@ export function evaluatePatientKnowledge(
   }
 
   // 4. EXPLICIT BOOKING / FIND CARE (checked before "visit" in appointments & Tamil "பதிவு" in records)
-  if (
+  const isBookingAction =
     t.includes("book ") ||
     t.includes("book a") ||
     t.includes("find doctor") ||
     t.includes("find nurse") ||
     t.includes("find care") ||
-    t.includes("home care") ||
-    t.includes("home visit") ||
+    ((t.includes("home care") || t.includes("home visit")) &&
+      (t.includes("book") ||
+        t.includes("find") ||
+        t.includes("schedule") ||
+        t.includes("need") ||
+        t.includes("request") ||
+        t.includes("बुक") ||
+        t.includes("ಬುಕ್") ||
+        t.includes("பதிவு") ||
+        t.includes("బుక్"))) ||
     t.includes("बुक") ||
     t.includes("ಬುಕ್") ||
     t.includes("பதிவு செய்") ||
     t.includes("செவிலியரை") ||
     t.includes("బుక్") ||
-    t.includes("బుకింగ్")
-  ) {
+    t.includes("బుకింగ్");
+
+  if (isBookingAction) {
     let spoken =
       "Here is the care directory. You can discover available doctors and nurses for clinic or home care.";
     if (language === "hi-IN") {
@@ -637,11 +697,18 @@ export function evaluatePatientKnowledge(
     t.includes("ఎప్పుడు")
   ) {
     const today = dayKey();
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
     const upcoming = (clinicState?.visits || [])
-      .filter(
-        (v) =>
-          !["Completed", "Cancelled"].includes(v.status) && v.date >= today,
-      )
+      .filter((v) => {
+        if (["Completed", "Cancelled"].includes(v.status)) return false;
+        if (v.date > today) return true;
+        if (v.date === today) {
+          return slotMinutes(v.time) >= currentMinutes;
+        }
+        return false;
+      })
       .sort(
         (a, b) =>
           a.date.localeCompare(b.date) ||

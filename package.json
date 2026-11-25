@@ -73,7 +73,7 @@
     "lint": "expo lint",
     "typecheck:backend": "tsc -p backend/tsconfig.json",
     "build:backend": "wrangler deploy --config backend/wrangler.jsonc --dry-run --outdir backend-build",
-    "test:cloud": "npm run build:backend && node scripts/cloud-test.cjs",
+    "test:cloud": "npm run build:backend && node scripts/cloud-test.cjs && node scripts/voice-cloud-test.cjs",
     "test:auth": "node scripts/email-auth-test.cjs",
     "test:reminders": "node scripts/reminder-test.cjs"
   },

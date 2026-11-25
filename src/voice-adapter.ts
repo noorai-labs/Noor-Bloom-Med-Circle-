@@ -210,7 +210,13 @@ export function resolveVoiceIntent(
     t.includes("fever") ||
     t.includes("diagnose") ||
     t.includes("what medicine should i take") ||
+    t.includes("which medicine should i take") ||
     t.includes("what should i take for") ||
+    t.includes("which should i take for") ||
+    t.includes("what to take for") ||
+    t.includes("which to take for") ||
+    t.includes("what medicine for") ||
+    t.includes("which medicine for") ||
     t.includes("cure") ||
     t.includes("symptom") ||
     t.includes("pain") ||
@@ -260,8 +266,16 @@ export function resolveVoiceIntent(
     t.includes("find care") ||
     t.includes("find doctor") ||
     t.includes("find nurse") ||
-    t.includes("home care") ||
-    t.includes("home visit") ||
+    ((t.includes("home care") || t.includes("home visit")) &&
+      (t.includes("book") ||
+        t.includes("find") ||
+        t.includes("schedule") ||
+        t.includes("need") ||
+        t.includes("request") ||
+        t.includes("बुक") ||
+        t.includes("ಬುಕ್") ||
+        t.includes("பதிவு") ||
+        t.includes("బుక్"))) ||
     // Hindi
     t.includes("बुक") ||
     // Kannada
