@@ -11,6 +11,7 @@ import { type Action } from "./clinic";
 import { cloudTransition } from "./cloud-transition";
 import { apiUrl } from "./cloud-config";
 import {
+  cloudBinaryRequest,
   cloudRequest,
   CloudError,
   readCloud,
@@ -386,6 +387,25 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
                 { method: "POST", body: JSON.stringify({ id }) },
               );
             },
+          },
+          voice: {
+            status: async () =>
+              cloudRequest(await token(), "/v1/voice/status"),
+            sttToken: async () =>
+              cloudRequest(await token(), "/v1/voice/stt-token", {
+                method: "POST",
+                body: JSON.stringify({}),
+              }),
+            synthesizeTts: async (transcript, language, signal) =>
+              cloudBinaryRequest(
+                await token(),
+                "/v1/voice/tts",
+                {
+                  method: "POST",
+                  body: JSON.stringify({ transcript, language }),
+                },
+                signal,
+              ),
           },
           status,
           recordsAccessible,

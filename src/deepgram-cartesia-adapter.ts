@@ -1,24 +1,18 @@
 /**
- * Deepgram (STT) + Cartesia (TTS) Voice Adapter for BLOOM MED
- * Features Voice Activity Detection (VAD) / Silence Auto-Stop
- * and ultra-low latency streaming for home healthcare.
+ * Authenticated Deepgram (STT) + Cartesia (TTS) Client Adapter for BLOOM MED
+ * - Keeps all speech provider API keys strictly on the backend (CWE-522 compliant)
+ * - Uses short-lived tokens from POST /v1/voice/stt-token for live Deepgram WebSockets
+ * - Proxies TTS audio synthesis through POST /v1/voice/tts
+ * - Features generation-guarded cancellation, utterance buffering, and barge-in VAD
  */
 
-import {
-  SpeechProviderAdapter,
-  resolveVoiceIntent,
-} from "./voice-adapter";
+import { SpeechProviderAdapter, resolveVoiceIntent } from "./voice-adapter";
 import {
   VoiceIntentResolution,
   VoiceLanguage,
   VoiceRecognitionResult,
 } from "./voice-types";
 
-const DEEPGRAM_API_KEY = process.env.EXPO_PUBLIC_DEEPGRAM_API_KEY || "";
-
-const CARTESIA_API_KEY = process.env.EXPO_PUBLIC_CARTESIA_API_KEY || "";
-
-// Mapping VoiceLanguage to Deepgram ISO language codes
 const DEEPGRAM_LANG_MAP: Record<VoiceLanguage, string> = {
   "en-IN": "en",
   "hi-IN": "hi",
@@ -27,18 +21,14 @@ const DEEPGRAM_LANG_MAP: Record<VoiceLanguage, string> = {
   "te-IN": "te",
 };
 
-// Mapping VoiceLanguage to Cartesia ISO language codes
-const CARTESIA_LANG_MAP: Record<VoiceLanguage, string> = {
-  "en-IN": "en",
-  "hi-IN": "hi",
-  "kn-IN": "kn",
-  "ta-IN": "ta",
-  "te-IN": "te",
-};
-
-export interface DeepgramCaptureCallbacks {
-  onSilenceAutoStop?: () => void;
-  onVolumeChange?: (volume: number) => void;
+export interface VoiceBackendClient {
+  status: () => Promise<{ sttAvailable: boolean; ttsAvailable: boolean }>;
+  sttToken: () => Promise<{ accessToken: string; expiresIn: number }>;
+  synthesizeTts: (
+    transcript: string,
+    language: VoiceLanguage,
+    signal?: AbortSignal,
+  ) => Promise<ArrayBuffer>;
 }
 
 export interface DeepgramStreamingCallbacks {
@@ -51,22 +41,45 @@ export interface DeepgramStreamingCallbacks {
 }
 
 export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
+  private backendClient: VoiceBackendClient | null = null;
   private activeAudio: HTMLAudioElement | null = null;
-  private mediaRecorder: any = null;
-  private recordedChunks: Blob[] = [];
-  private audioCtx: any = null;
-  private vadInterval: any = null;
+  private activePlaybackTimeout: ReturnType<typeof setTimeout> | null = null;
+  private activeAbortController: AbortController | null = null;
+  private speechGeneration = 0;
+
   private liveWs: WebSocket | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
+  private audioCtx: AudioContext | null = null;
+  private vadInterval: ReturnType<typeof setInterval> | null = null;
   private activeStream: MediaStream | null = null;
+  private liveSessionId = 0;
   private isSpeaking = false;
 
+  setBackendClient(client?: VoiceBackendClient | null): void {
+    this.backendClient = client ?? null;
+  }
+
   isConfigured(): boolean {
-    return Boolean(DEEPGRAM_API_KEY && CARTESIA_API_KEY);
+    return Boolean(this.backendClient);
+  }
+
+  async checkAvailability(): Promise<{
+    sttAvailable: boolean;
+    ttsAvailable: boolean;
+  }> {
+    if (!this.backendClient) {
+      return { sttAvailable: false, ttsAvailable: false };
+    }
+    try {
+      return await this.backendClient.status();
+    } catch {
+      return { sttAvailable: false, ttsAvailable: false };
+    }
   }
 
   async transcribeTestAudio(
     testPhrase: string,
-    language: VoiceLanguage = "en-IN"
+    language: VoiceLanguage = "en-IN",
   ): Promise<VoiceRecognitionResult> {
     await new Promise((resolve) => setTimeout(resolve, 200));
     return {
@@ -79,261 +92,407 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
 
   resolveIntent(
     transcript: string,
-    language: VoiceLanguage = "en-IN"
+    language: VoiceLanguage = "en-IN",
   ): VoiceIntentResolution {
     return resolveVoiceIntent(transcript, language);
   }
 
   /**
-   * Transcribe recorded audio buffer using Deepgram Nova-3 API
-   */
-  async transcribeAudioBlob(
-    audioBlob: Blob,
-    language: VoiceLanguage = "en-IN"
-  ): Promise<string> {
-    if (!DEEPGRAM_API_KEY) {
-      throw new Error("Deepgram API key is not configured.");
-    }
-
-    const langCode = DEEPGRAM_LANG_MAP[language] || "en";
-    const endpoint = `https://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&language=${langCode}`;
-
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Token ${DEEPGRAM_API_KEY}`,
-        "Content-Type": audioBlob.type || "audio/webm",
-      },
-      body: audioBlob,
-    });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      throw new Error(`Deepgram STT failed (${response.status}): ${errText}`);
-    }
-
-    const data = await response.json();
-    const transcript =
-      data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
-    return transcript.trim();
-  }
-
-  /**
-   * Synthesize natural speech using Cartesia Sonic (sub-90ms ultra-low latency TTS)
+   * Synthesize speech via authenticated backend proxy (/v1/voice/tts).
+   * Supports cancellation before audio element creation via speechGeneration & AbortController.
    */
   async synthesizeSpeech(
     text: string,
-    language: VoiceLanguage = "en-IN"
+    language: VoiceLanguage = "en-IN",
+    onPlaybackStart?: () => void,
   ): Promise<{ synthesized: boolean; durationMs: number }> {
     this.stopSpeaking();
 
-    if (!CARTESIA_API_KEY || typeof window === "undefined") {
-      return { synthesized: false, durationMs: 1000 };
+    if (!this.backendClient || typeof window === "undefined") {
+      return { synthesized: false, durationMs: 0 };
     }
 
-    try {
-      const cartesiaLang = CARTESIA_LANG_MAP[language] || "en";
-      const response = await fetch("https://api.cartesia.ai/tts/bytes", {
-        method: "POST",
-        headers: {
-          "X-API-Key": CARTESIA_API_KEY,
-          "Cartesia-Version": "2024-06-10",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model_id: "sonic-3.6",
-          transcript: text,
-          voice: {
-            mode: "id",
-            id: "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4", // Skylar (approachable care persona)
-          },
-          output_format: {
-            container: "mp3",
-            sample_rate: 44100,
-            encoding: "mp3",
-          },
-          language: cartesiaLang,
-        }),
-      });
+    const gen = ++this.speechGeneration;
+    const controller = new AbortController();
+    this.activeAbortController = controller;
 
-      if (!response.ok) {
-        throw new Error(`Cartesia TTS error (${response.status})`);
+    try {
+      const audioBytes = await this.backendClient.synthesizeTts(
+        text,
+        language,
+        controller.signal,
+      );
+
+      if (gen !== this.speechGeneration || controller.signal.aborted) {
+        return { synthesized: false, durationMs: 0 };
       }
 
-      this.isSpeaking = true;
-      const audioBytes = await response.arrayBuffer();
-      const blob = new Blob([audioBytes], { type: "audio/mp3" });
+      const blob = new Blob([audioBytes], { type: "audio/mpeg" });
       const audioUrl = URL.createObjectURL(blob);
 
-      return new Promise((resolve) => {
+      return await new Promise((resolve) => {
+        if (gen !== this.speechGeneration || controller.signal.aborted) {
+          URL.revokeObjectURL(audioUrl);
+          resolve({ synthesized: false, durationMs: 0 });
+          return;
+        }
+
         const audio = new Audio(audioUrl);
         this.activeAudio = audio;
+        this.isSpeaking = true;
 
         let finished = false;
-        const done = () => {
-          if (!finished) {
-            finished = true;
-            this.isSpeaking = false;
-            URL.revokeObjectURL(audioUrl);
-            this.activeAudio = null;
-            resolve({ synthesized: true, durationMs: 1500 });
+        let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const done = (synthesized: boolean) => {
+          if (finished) return;
+          finished = true;
+
+          if (fallbackTimer) {
+            clearTimeout(fallbackTimer);
+            fallbackTimer = null;
           }
+          if (this.activePlaybackTimeout === fallbackTimer) {
+            this.activePlaybackTimeout = null;
+          }
+          if (this.activeAudio === audio) {
+            this.isSpeaking = false;
+            this.activeAudio = null;
+          }
+
+          URL.revokeObjectURL(audioUrl);
+          resolve({
+            synthesized,
+            durationMs: synthesized ? 1500 : 0,
+          });
         };
 
-        audio.onended = done;
-        audio.onerror = done;
+        audio.onended = () => done(true);
+        audio.onerror = () => done(false);
 
-        // Safety fallback timeout
-        setTimeout(done, Math.max(3000, text.length * 90));
+        const maxDuration = Math.max(5000, text.length * 140);
+        fallbackTimer = setTimeout(() => done(true), maxDuration);
+        this.activePlaybackTimeout = fallbackTimer;
 
-        audio.play().catch(() => {
-          done();
-        });
+        audio.play()
+          .then(() => {
+            if (gen === this.speechGeneration && !finished) {
+              onPlaybackStart?.();
+            }
+          })
+          .catch(() => done(false));
       });
     } catch {
-      this.isSpeaking = false;
-      return { synthesized: false, durationMs: 1000 };
+      if (this.activeAbortController === controller) {
+        this.activeAbortController = null;
+      }
+      return { synthesized: false, durationMs: 0 };
+    } finally {
+      if (this.activeAbortController === controller) {
+        this.activeAbortController = null;
+      }
+    }
+  }
+
+  stopSpeaking(): void {
+    this.speechGeneration++;
+    this.isSpeaking = false;
+
+    if (this.activeAbortController) {
+      try {
+        this.activeAbortController.abort();
+      } catch {
+        // ignore
+      }
+      this.activeAbortController = null;
+    }
+
+    if (this.activePlaybackTimeout) {
+      clearTimeout(this.activePlaybackTimeout);
+      this.activePlaybackTimeout = null;
+    }
+
+    if (this.activeAudio) {
+      const audio = this.activeAudio;
+      this.activeAudio = null;
+      try {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {
+        // ignore
+      }
     }
   }
 
   /**
-   * Stop any in-progress speech playback
-   */
-  /**
-   * Start bidirectional live WebSocket streaming with Deepgram Nova-3.
-   * Features:
-   * - Real-time interim transcript updates as the user speaks
-   * - Mid-sentence pause tolerance (endpointing: 300)
-   * - Barge-In / Interruption detection: cuts off Bloom's audio when user speaks
+   * Starts a live Deepgram WebSocket session using a short-lived token minted by the backend.
+   * Resolves true ONLY after microphone acquisition, WebSocket open, and MediaRecorder start succeed.
    */
   async startLiveWebSocketSession(
     language: VoiceLanguage = "en-IN",
-    callbacks?: DeepgramStreamingCallbacks
+    callbacks?: DeepgramStreamingCallbacks,
   ): Promise<boolean> {
-    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      callbacks?.onError?.("Microphone is not supported in this environment.");
+    if (
+      typeof window === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      callbacks?.onError?.("Microphone streaming is not supported in this environment.");
       return false;
     }
-    if (!DEEPGRAM_API_KEY) {
-      callbacks?.onError?.("Deepgram API key is not configured.");
+
+    if (!this.backendClient) {
+      callbacks?.onError?.(
+        "Voice service requires cloud backend configuration. Switch to cloud mode and sign in to continue.",
+      );
       return false;
     }
+
+    this.stopLiveWebSocketSession();
+    const sessionId = ++this.liveSessionId;
+
+    let stream: MediaStream | null = null;
+    let accessToken = "";
 
     try {
-      this.stopLiveWebSocketSession();
+      // 1. Acquire short-lived Deepgram token and microphone permission BEFORE opening WebSocket
+      const [tokenResult, acquiredStream] = await Promise.all([
+        this.backendClient.sttToken(),
+        navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        }),
+      ]);
 
-      const langCode = DEEPGRAM_LANG_MAP[language] || "en";
-      const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&interim_results=true&endpointing=300&language=${langCode}`;
+      stream = acquiredStream;
+      accessToken = tokenResult.accessToken;
 
-      // Connect using Deepgram's browser subprotocol authentication
-      const ws = new WebSocket(wsUrl, ["token", DEEPGRAM_API_KEY]);
-      this.liveWs = ws;
+      // Cancel cleanly if modal closed or another session superseded while awaiting permissions/token
+      if (sessionId !== this.liveSessionId) {
+        stream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
+    } catch (err: any) {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+      if (sessionId === this.liveSessionId) {
+        const message =
+          err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError"
+            ? "Microphone access denied. Please allow mic permissions in your browser."
+            : err?.message || "Could not access microphone or speech token.";
+        callbacks?.onError?.(message);
+      }
+      return false;
+    }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      this.activeStream = stream;
+    this.activeStream = stream;
 
-      // Setup Web Audio API VAD for Barge-in detection & visualizer volume
-      try {
-        const AudioCtxClass =
-          window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtxClass) {
-          const ctx = new AudioCtxClass();
-          this.audioCtx = ctx;
-          const source = ctx.createMediaStreamSource(stream);
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 512;
-          source.connect(analyser);
+    // 2. Setup Web Audio VAD analyzer for real-time volume visualization and sustained-speech barge-in
+    try {
+      const AudioCtxClass =
+        window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtxClass) {
+        const ctx = new AudioCtxClass();
+        this.audioCtx = ctx;
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
 
-          const dataArray = new Uint8Array(analyser.frequencyBinCount);
-          this.vadInterval = setInterval(() => {
-            analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-              sum += dataArray[i];
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        let sustainedBargeInFrames = 0;
+
+        this.vadInterval = setInterval(() => {
+          if (sessionId !== this.liveSessionId) return;
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / dataArray.length;
+          callbacks?.onVolumeChange?.(avg);
+
+          // Require sustained clear user speech (> 26 energy for 3 consecutive 80ms frames = ~240ms)
+          // to avoid brief ambient noise spikes or speaker bleed triggering self-interruption.
+          if (this.isSpeaking) {
+            if (avg > 26) {
+              sustainedBargeInFrames++;
+              if (sustainedBargeInFrames >= 3) {
+                sustainedBargeInFrames = 0;
+                this.stopSpeaking();
+                callbacks?.onBargeIn?.();
+              }
+            } else {
+              sustainedBargeInFrames = 0;
             }
-            const avg = sum / dataArray.length;
-            callbacks?.onVolumeChange?.(avg);
+          } else {
+            sustainedBargeInFrames = 0;
+          }
+        }, 80);
+      }
+    } catch {
+      // VAD visualization optional
+    }
 
-            // BARGE-IN: If Bloom is speaking and user speaks (volume > 18) -> interrupt Bloom!
-            if (this.isSpeaking && avg > 18) {
-              this.stopSpeaking();
-              callbacks?.onBargeIn?.();
-            }
-          }, 80);
+    // 3. Open WebSocket with short-lived token and register all handlers synchronously
+    const langCode = DEEPGRAM_LANG_MAP[language] || "en";
+    const wsUrl = `wss://api.deepgram.com/v1/listen?model=nova-3&smart_format=true&interim_results=true&vad_events=true&endpointing=850&language=${langCode}`;
+
+    return await new Promise<boolean>((resolve) => {
+      let settled = false;
+      let utteranceBuffer = "";
+
+      const settle = (ok: boolean) => {
+        if (!settled) {
+          settled = true;
+          resolve(ok);
         }
-      } catch {
-        // VAD optional
+      };
+
+      const failAndCleanup = (errorMessage?: string) => {
+        utteranceBuffer = "";
+        if (sessionId === this.liveSessionId) {
+          this.stopLiveWebSocketSession(true);
+          if (errorMessage) {
+            callbacks?.onError?.(errorMessage);
+          }
+        }
+        settle(false);
+      };
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl, ["token", accessToken]);
+        this.liveWs = ws;
+      } catch (err: any) {
+        failAndCleanup(err?.message || "Could not open speech streaming connection.");
+        return;
       }
 
       ws.onopen = () => {
-        let mimeType = "audio/webm";
-        if (typeof MediaRecorder !== "undefined") {
+        if (sessionId !== this.liveSessionId) {
+          try {
+            ws.close();
+          } catch {
+            // ignore
+          }
+          settle(false);
+          return;
+        }
+
+        try {
+          let mimeType = "audio/webm";
           if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
             mimeType = "audio/webm;codecs=opus";
           } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
             mimeType = "audio/mp4";
           }
+
+          const recorder = new MediaRecorder(stream!, { mimeType });
+          this.mediaRecorder = recorder;
+
+          recorder.ondataavailable = (event) => {
+            if (
+              sessionId === this.liveSessionId &&
+              event.data &&
+              event.data.size > 0 &&
+              ws.readyState === WebSocket.OPEN
+            ) {
+              ws.send(event.data);
+            }
+          };
+
+          recorder.onerror = () => {
+            failAndCleanup("Microphone recording failed.");
+          };
+
+          recorder.start(100);
+          settle(true);
+        } catch (err: any) {
+          failAndCleanup(err?.message || "Failed to start audio recorder.");
         }
-
-        const recorder = new MediaRecorder(stream, { mimeType });
-        this.mediaRecorder = recorder;
-
-        recorder.ondataavailable = (event) => {
-          if (
-            event.data &&
-            event.data.size > 0 &&
-            ws.readyState === WebSocket.OPEN
-          ) {
-            ws.send(event.data);
-          }
-        };
-
-        // Stream audio chunks in 100ms real-time slices
-        recorder.start(100);
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = (msg) => {
+        if (sessionId !== this.liveSessionId) return;
         try {
-          const data = JSON.parse(event.data);
-          const alternative = data?.channel?.alternatives?.[0];
-          const transcript = alternative?.transcript || "";
+          const data = JSON.parse(msg.data as string);
 
-          if (transcript.trim()) {
-            callbacks?.onSpeechStarted?.();
-            callbacks?.onInterimTranscript?.(transcript.trim());
+          // Ignore Deepgram speech events/transcripts caused by Bloom's own playback
+          if (this.isSpeaking) {
+            return;
           }
 
-          // When Deepgram detects speech completion
-          if (data?.speech_final && transcript.trim()) {
-            callbacks?.onFinalTranscript?.(transcript.trim());
+          if (data.type === "SpeechStarted") {
+            callbacks?.onSpeechStarted?.();
+            return;
+          }
+
+          if (data.type === "UtteranceEnd" && utteranceBuffer.trim()) {
+            const combined = utteranceBuffer.trim();
+            utteranceBuffer = "";
+            callbacks?.onFinalTranscript?.(combined);
+            return;
+          }
+
+          const transcript = data?.channel?.alternatives?.[0]?.transcript || "";
+          if (transcript.trim()) {
+            if (data.is_final) {
+              utteranceBuffer = utteranceBuffer
+                ? `${utteranceBuffer} ${transcript.trim()}`
+                : transcript.trim();
+
+              if (data.speech_final || data.from_finalize) {
+                const combined = utteranceBuffer.trim();
+                utteranceBuffer = "";
+                callbacks?.onFinalTranscript?.(combined);
+              } else {
+                callbacks?.onInterimTranscript?.(utteranceBuffer);
+              }
+            } else {
+              const preview = utteranceBuffer
+                ? `${utteranceBuffer} ${transcript}`
+                : transcript;
+              callbacks?.onInterimTranscript?.(preview);
+            }
+          } else if (data.speech_final && utteranceBuffer.trim()) {
+            const combined = utteranceBuffer.trim();
+            utteranceBuffer = "";
+            callbacks?.onFinalTranscript?.(combined);
           }
         } catch {
-          // ignore
+          // ignore malformed keepalive messages
         }
       };
 
       ws.onerror = () => {
-        callbacks?.onError?.("Deepgram live streaming error.");
+        failAndCleanup("Deepgram live streaming connection error.");
       };
 
-      return true;
-    } catch (err: any) {
-      callbacks?.onError?.(err?.message || "Could not access microphone.");
-      return false;
-    }
+      ws.onclose = () => {
+        if (sessionId === this.liveSessionId && !settled) {
+          failAndCleanup("Speech connection closed before recording started.");
+        } else if (sessionId === this.liveSessionId) {
+          // Unexpected drop mid-session: release mic and VAD resources cleanly
+          this.stopLiveWebSocketSession(true);
+        }
+      };
+    });
   }
 
   /**
-   * Stop live WebSocket streaming and release all microphone hardware
-   * @param keepSpeaking If true, allows ongoing TTS speech audio playback to continue playing during screen transitions
+   * Stop live WebSocket streaming and release all microphone hardware.
+   * @param keepSpeaking If true, ongoing TTS audio continues playing across navigation.
    */
   stopLiveWebSocketSession(keepSpeaking = false): void {
+    this.liveSessionId++;
+
     if (!keepSpeaking) {
       this.stopSpeaking();
     }
@@ -352,177 +511,41 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
       this.audioCtx = null;
     }
 
-    if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
-      try {
-        this.mediaRecorder.stop();
-      } catch {
-        // ignore
-      }
+    if (this.mediaRecorder) {
+      const rec = this.mediaRecorder;
       this.mediaRecorder = null;
+      if (rec.state !== "inactive") {
+        try {
+          rec.stop();
+        } catch {
+          // ignore
+        }
+      }
     }
 
     if (this.liveWs) {
+      const ws = this.liveWs;
+      this.liveWs = null;
       try {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
         if (
-          this.liveWs.readyState === WebSocket.OPEN ||
-          this.liveWs.readyState === WebSocket.CONNECTING
+          ws.readyState === WebSocket.OPEN ||
+          ws.readyState === WebSocket.CONNECTING
         ) {
-          this.liveWs.close();
+          ws.close();
         }
       } catch {
         // ignore
       }
-      this.liveWs = null;
     }
 
-    // Release microphone hardware completely (turns off hardware mic light)
     if (this.activeStream) {
       this.activeStream.getTracks().forEach((track) => track.stop());
       this.activeStream = null;
     }
-  }
-
-  stopSpeaking(): void {
-    if (this.activeAudio) {
-      try {
-        this.activeAudio.pause();
-        this.activeAudio.currentTime = 0;
-      } catch {
-        // ignore
-      }
-      this.activeAudio = null;
-    }
-  }
-
-  /**
-   * Start microphone capture with Voice Activity Detection (VAD)
-   * Automatically stops 1.3 seconds after the user stops speaking!
-   */
-  async startMicrophoneCapture(callbacks?: DeepgramCaptureCallbacks): Promise<boolean> {
-    if (typeof window === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      return false;
-    }
-
-    try {
-      this.cleanupVAD();
-      this.recordedChunks = [];
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      this.mediaRecorder = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          this.recordedChunks.push(event.data);
-        }
-      };
-
-      recorder.start(100);
-
-      // Setup Web Audio API VAD (Silence Detector)
-      try {
-        const AudioContextClass =
-          window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioContextClass) {
-          const ctx = new AudioContextClass();
-          this.audioCtx = ctx;
-          const source = ctx.createMediaStreamSource(stream);
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 512;
-          source.connect(analyser);
-
-          const dataArray = new Uint8Array(analyser.frequencyBinCount);
-          let silenceStart = 0;
-          let speechDetected = false;
-          const recordingStartTime = Date.now();
-
-          this.vadInterval = setInterval(() => {
-            analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-              sum += dataArray[i];
-            }
-            const avg = sum / dataArray.length;
-            callbacks?.onVolumeChange?.(avg);
-
-            const VOICE_THRESHOLD = 14;
-            if (avg > VOICE_THRESHOLD) {
-              speechDetected = true;
-              silenceStart = Date.now();
-            } else if (speechDetected) {
-              const silenceElapsed = Date.now() - silenceStart;
-              // If user spoke and has now paused for 1.2 seconds -> auto-stop!
-              if (silenceElapsed > 1200) {
-                this.cleanupVAD();
-                callbacks?.onSilenceAutoStop?.();
-              }
-            } else if (Date.now() - recordingStartTime > 8000) {
-              // Safety timeout: 8s with no speech detected -> auto-stop
-              this.cleanupVAD();
-              callbacks?.onSilenceAutoStop?.();
-            }
-          }, 100);
-        }
-      } catch {
-        // VAD optional; fallback to manual tap
-      }
-
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private cleanupVAD(): void {
-    if (this.vadInterval) {
-      clearInterval(this.vadInterval);
-      this.vadInterval = null;
-    }
-    if (this.audioCtx) {
-      try {
-        this.audioCtx.close();
-      } catch {
-        // ignore
-      }
-      this.audioCtx = null;
-    }
-  }
-
-  /**
-   * Stop microphone capture and return audio blob
-   */
-  async stopMicrophoneCapture(): Promise<Blob | null> {
-    this.cleanupVAD();
-
-    return new Promise((resolve) => {
-      if (!this.mediaRecorder) {
-        resolve(null);
-        return;
-      }
-
-      this.mediaRecorder.onstop = () => {
-        try {
-          const mimeType = this.mediaRecorder?.mimeType || "audio/webm";
-          const blob = new Blob(this.recordedChunks, { type: mimeType });
-          this.mediaRecorder.stream?.getTracks().forEach((track: any) => track.stop());
-          this.mediaRecorder = null;
-          this.recordedChunks = [];
-          resolve(blob);
-        } catch {
-          resolve(null);
-        }
-      };
-
-      try {
-        if (this.mediaRecorder.state !== "inactive") {
-          this.mediaRecorder.stop();
-        } else {
-          resolve(null);
-        }
-      } catch {
-        resolve(null);
-      }
-    });
   }
 }
 

@@ -1,17 +1,16 @@
 /**
  * Multilingual Voice Assistant Modal for BLOOM MED
  * Next-Gen Gemini Live & ChatGPT Advanced Voice Style
- * - Deepgram Nova-3 Real-Time WebSocket Streaming with Interim Words
- * - Cartesia Sonic Ultra-Low Latency Speech Synthesis
- * - Unified Patient Knowledge Engine (Records, Consultations, Medicines, Vitals, Allergies)
- * - Multi-Turn Conversational Context & Memory Persistence
+ * - Authenticated Backend Speech Proxy (keys kept strictly on server)
+ * - Deepgram Nova-3 Real-Time WebSocket Streaming with Interim Words & Utterance Buffering
+ * - Cartesia Sonic Speech Synthesis with Pre-Playback Cancellation & Fallback Notice
+ * - Unified Patient Knowledge Engine & Multi-Turn Context via Live Refs
  * - Real-Time Audio-Reactive Glowing Visualizer Orb
- * - Real-Time Barge-In Interruption
- * - Hands-Free Continuous Multi-Turn Loop
- * - 60-Second Inactivity Hardware Auto-Release
+ * - Sustained-Speech Barge-In & Standalone "Stop" Voice Command
+ * - 60-Second Inactivity Hardware Auto-Release (Measured from Last User Speech)
  */
 
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Modal,
@@ -22,22 +21,11 @@ import {
 } from "react-native";
 import { router } from "expo-router";
 import * as Haptics from "expo-haptics";
-import {
-  Button,
-  Icon,
-  Touch,
-} from "./components";
-import {
-  deepgramCartesiaAdapter,
-} from "./deepgram-cartesia-adapter";
+import { Button, Icon, Touch } from "./components";
+import { deepgramCartesiaAdapter } from "./deepgram-cartesia-adapter";
 import { ClinicContext } from "./store";
-import {
-  SUPPORTED_VOICE_LANGUAGES,
-} from "./voice-adapter";
-import {
-  VoiceLanguage,
-  VoicePipelineStatus,
-} from "./voice-types";
+import { SUPPORTED_VOICE_LANGUAGES } from "./voice-adapter";
+import { VoiceLanguage, VoicePipelineStatus } from "./voice-types";
 import {
   AdvancedVoiceResponse,
   ConversationTurn,
@@ -48,6 +36,47 @@ interface VoiceModalProps {
   visible: boolean;
   onClose: () => void;
   defaultLanguage?: VoiceLanguage;
+}
+
+const STANDALONE_STOP_COMMANDS = new Set([
+  "stop",
+  "stop listening",
+  "exit",
+  "close",
+  "bye",
+  "रोको",
+  "बंद करो",
+  "ರುಕೋ",
+  "ನಿಲ್ಲಿಸಿ",
+  "நிறுத்து",
+  "ఆపు",
+]);
+
+function isStandaloneStopCommand(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return STANDALONE_STOP_COMMANDS.has(normalized);
+}
+
+function formatRouteLabel(route: string, isEmergency?: boolean): string {
+  if (isEmergency || route === "/sos") {
+    return "Open Emergency SOS Support →";
+  }
+  switch (route) {
+    case "/medicines":
+      return "Open Medicines →";
+    case "/(tabs)/records":
+      return "Open Records →";
+    case "/(tabs)/appointments":
+      return "Open Appointments →";
+    case "/discover":
+      return "Open Care Directory →";
+    default:
+      return "Open Screen →";
+  }
 }
 
 export function VoiceModal({
@@ -61,44 +90,111 @@ export function VoiceModal({
   const [selectedLanguage, setSelectedLanguage] =
     useState<VoiceLanguage>(defaultLanguage);
   const [transcript, setTranscript] = useState<string>("");
-  const [resolution, setResolution] = useState<AdvancedVoiceResponse | null>(null);
+  const [resolution, setResolution] = useState<AdvancedVoiceResponse | null>(
+    null,
+  );
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [audioNotice, setAudioNotice] = useState<string>("");
   const [micVolume, setMicVolume] = useState<number>(0);
   const [history, setHistory] = useState<ConversationTurn[]>([]);
 
-  // Animation values for the Gemini Live glowing visualizer orb
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-  const waveAnim1 = useRef(new Animated.Value(1)).current;
-  const waveAnim2 = useRef(new Animated.Value(1)).current;
+  // Live refs so stable WebSocket callbacks always read current state & history
+  const clinicStateRef = useRef(clinicStore?.state);
+  const historyRef = useRef<ConversationTurn[]>(history);
+  const selectedLanguageRef = useRef<VoiceLanguage>(selectedLanguage);
+  const errorMsgRef = useRef<string>(errorMsg);
+
+  useEffect(() => {
+    clinicStateRef.current = clinicStore?.state;
+  }, [clinicStore?.state]);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    selectedLanguageRef.current = selectedLanguage;
+  }, [selectedLanguage]);
+
+  useEffect(() => {
+    errorMsgRef.current = errorMsg;
+  }, [errorMsg]);
+
+  // Sync authenticated backend voice proxy client whenever cloud context updates
+  useEffect(() => {
+    deepgramCartesiaAdapter.setBackendClient(clinicStore?.cloud?.voice ?? null);
+  }, [clinicStore?.cloud?.voice]);
+
+  // Animation values for Gemini Live glowing visualizer orb
+  const [pulseAnim] = useState(() => new Animated.Value(1));
+  const [waveAnim1] = useState(() => new Animated.Value(1));
+  const [waveAnim2] = useState(() => new Animated.Value(1));
+
+  // Lifecycle & cancellation tokens
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionGenRef = useRef(0);
+  const turnGenRef = useRef(0);
+  const pendingNavTokenRef = useRef(0);
+  const mountedRef = useRef(true);
 
-  // 60-Second Inactivity Timer (releases mic & closes session on silence)
-  function resetInactivityTimer() {
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
+  const cancelPendingNavigation = useCallback(() => {
+    pendingNavTokenRef.current++;
+    if (navigationTimerRef.current) {
+      clearTimeout(navigationTimerRef.current);
+      navigationTimerRef.current = null;
     }
-    inactivityTimerRef.current = setTimeout(() => {
-      // 60 seconds of silence -> close session & release microphone hardware completely
-      stopAll();
-      onClose();
-    }, 60000);
-  }
+  }, []);
 
-  function stopAll() {
+  const clearInactivityTimer = useCallback(() => {
     if (inactivityTimerRef.current) {
       clearTimeout(inactivityTimerRef.current);
       inactivityTimerRef.current = null;
     }
-    deepgramCartesiaAdapter.stopSpeaking();
-    deepgramCartesiaAdapter.stopLiveWebSocketSession();
-    setStatus("idle");
-    setMicVolume(0);
+  }, []);
+
+  const stopAll = useCallback(
+    (keepSpeaking = false) => {
+      sessionGenRef.current++;
+      turnGenRef.current++;
+      cancelPendingNavigation();
+      clearInactivityTimer();
+
+      if (keepSpeaking) {
+        deepgramCartesiaAdapter.stopLiveWebSocketSession(true);
+      } else {
+        deepgramCartesiaAdapter.stopSpeaking();
+        deepgramCartesiaAdapter.stopLiveWebSocketSession(false);
+      }
+
+      if (mountedRef.current) {
+        setStatus("idle");
+        setMicVolume(0);
+      }
+    },
+    [cancelPendingNavigation, clearInactivityTimer],
+  );
+
+  // 60-Second Inactivity Timer (measured strictly from user speech; closes & releases mic)
+  function resetInactivityTimer() {
+    clearInactivityTimer();
+    const capturedSession = sessionGenRef.current;
+    inactivityTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current || capturedSession !== sessionGenRef.current) {
+        return;
+      }
+      stopAll(false);
+      onClose();
+    }, 60000);
   }
 
   // Visualizer Orb Animations
   useEffect(() => {
-    if (status === "listening" || status === "speaking" || status === "processing") {
-      // Outer ripple wave 1
+    if (
+      status === "listening" ||
+      status === "speaking" ||
+      status === "processing"
+    ) {
       const wave1Loop = Animated.loop(
         Animated.sequence([
           Animated.timing(waveAnim1, {
@@ -111,10 +207,9 @@ export function VoiceModal({
             duration: 1100,
             useNativeDriver: Platform.OS !== "web",
           }),
-        ])
+        ]),
       );
 
-      // Mid shimmer wave 2
       const wave2Loop = Animated.loop(
         Animated.sequence([
           Animated.timing(waveAnim2, {
@@ -127,10 +222,9 @@ export function VoiceModal({
             duration: 850,
             useNativeDriver: Platform.OS !== "web",
           }),
-        ])
+        ]),
       );
 
-      // Core pulse
       const pulseLoop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -143,7 +237,7 @@ export function VoiceModal({
             duration: 650,
             useNativeDriver: Platform.OS !== "web",
           }),
-        ])
+        ]),
       );
 
       wave1Loop.start();
@@ -163,174 +257,304 @@ export function VoiceModal({
   }, [status, pulseAnim, waveAnim1, waveAnim2]);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      stopAll();
+      mountedRef.current = false;
+      stopAll(false);
     };
-  }, []);
+  }, [stopAll]);
+
+  // Cancel any live session / pending nav if parent hides the modal externally
+  useEffect(() => {
+    if (!visible) {
+      stopAll(false);
+    }
+  }, [visible, stopAll]);
 
   function handleNavigate(route: string) {
-    stopAll();
+    stopAll(false);
     onClose();
     router.push(route as any);
   }
 
   /**
-   * Process final spoken transcript using the Unified Patient Knowledge Engine
-   * and conversational history
+   * Process final user utterance using latest refs for patient knowledge & memory.
    */
   async function handleSpokenTranscript(finalText: string) {
     if (!finalText.trim()) return;
 
+    // 1. Standalone "Stop" voice command ends the session immediately before patient evaluation
+    if (isStandaloneStopCommand(finalText)) {
+      stopAll(false);
+      onClose();
+      return;
+    }
+
+    const capturedSession = sessionGenRef.current;
+    const capturedTurn = ++turnGenRef.current;
+
     resetInactivityTimer();
     setTranscript(finalText);
+    setAudioNotice("");
     setStatus("processing");
 
     try {
-      // Evaluate against full patient universe (records, consultations, medicines, vitals, allergies)
+      const lang = selectedLanguageRef.current;
       const res = evaluatePatientKnowledge(
         finalText,
-        selectedLanguage,
-        clinicStore?.state,
-        history
+        lang,
+        clinicStateRef.current,
+        historyRef.current,
       );
 
-      setResolution(res);
-
-      // Save turn into conversational memory for multi-turn follow-ups
-      setHistory((prev) => [
-        ...prev,
-        {
-          user: finalText,
-          bloom: res.spokenResponse,
-          topic: res.category as any,
-          entityName: res.highlightData,
-        },
-      ]);
-
-      setStatus("speaking");
-
-      // Check if this intent triggers auto-navigation to a specific page
-      if (res.targetRoute) {
-        // 1. Start speaking the on-screen readout via Cartesia Sonic
-        const speechPromise = deepgramCartesiaAdapter.synthesizeSpeech(
-          res.spokenResponse,
-          selectedLanguage
-        );
-
-        // 2. Automatically navigate to the destination page after a smooth delay (300ms)
-        // so the patient sees the screen appear while Bloom reads out its contents!
-        setTimeout(() => {
-          deepgramCartesiaAdapter.stopLiveWebSocketSession(true);
-          if (inactivityTimerRef.current) {
-            clearTimeout(inactivityTimerRef.current);
-            inactivityTimerRef.current = null;
-          }
-          setStatus("idle");
-          onClose();
-          router.push(res.targetRoute as any);
-        }, 300);
-
-        await speechPromise;
+      if (
+        !mountedRef.current ||
+        capturedSession !== sessionGenRef.current ||
+        capturedTurn !== turnGenRef.current
+      ) {
         return;
       }
 
-      // Conversational queries (no target route) stay in the modal:
-      await deepgramCartesiaAdapter.synthesizeSpeech(
+      setResolution(res);
+
+      const nextTurn: ConversationTurn = {
+        user: finalText,
+        bloom: res.spokenResponse,
+        topic: res.category as ConversationTurn["topic"],
+        medicineId: res.medicineId,
+      };
+      const updatedHistory = [...historyRef.current, nextTurn];
+      historyRef.current = updatedHistory;
+      setHistory(updatedHistory);
+
+      // 2. Check server TTS availability before treating navigation as an audible readout
+      const availability = await deepgramCartesiaAdapter.checkAvailability();
+      if (
+        !mountedRef.current ||
+        capturedSession !== sessionGenRef.current ||
+        capturedTurn !== turnGenRef.current
+      ) {
+        return;
+      }
+
+      if (!availability.ttsAvailable) {
+        setAudioNotice(
+          "Voice playback is unavailable; showing text response.",
+        );
+        setStatus("listening");
+        return;
+      }
+
+      setStatus("speaking");
+
+      if (res.targetRoute && !res.requiresConfirmation) {
+        const navToken = ++pendingNavTokenRef.current;
+        const target = res.targetRoute;
+
+        const speechResult = await deepgramCartesiaAdapter.synthesizeSpeech(
+          res.spokenResponse,
+          lang,
+          () => {
+            // Schedule handoff ONLY once audible playback actually starts
+            if (
+              !mountedRef.current ||
+              capturedSession !== sessionGenRef.current ||
+              navToken !== pendingNavTokenRef.current
+            ) {
+              return;
+            }
+            if (navigationTimerRef.current) {
+              clearTimeout(navigationTimerRef.current);
+            }
+            navigationTimerRef.current = setTimeout(() => {
+              if (
+                !mountedRef.current ||
+                capturedSession !== sessionGenRef.current ||
+                navToken !== pendingNavTokenRef.current
+              ) {
+                return;
+              }
+              navigationTimerRef.current = null;
+              stopAll(true);
+              onClose();
+              router.push(target as any);
+            }, 300);
+          },
+        );
+
+        if (
+          !mountedRef.current ||
+          capturedSession !== sessionGenRef.current ||
+          capturedTurn !== turnGenRef.current
+        ) {
+          return;
+        }
+
+        if (!speechResult.synthesized) {
+          cancelPendingNavigation();
+          setAudioNotice(
+            "Voice playback could not play; tap the button below to continue.",
+          );
+          setStatus("listening");
+        }
+        return;
+      }
+
+      // Conversational or confirmation-required queries remain inside the modal
+      const speechResult = await deepgramCartesiaAdapter.synthesizeSpeech(
         res.spokenResponse,
-        selectedLanguage
+        lang,
       );
 
-      // Hands-Free Continuous Loop:
-      // When Bloom finishes speaking inside the modal, seamlessly resume listening for next user turn!
+      if (
+        !mountedRef.current ||
+        capturedSession !== sessionGenRef.current ||
+        capturedTurn !== turnGenRef.current
+      ) {
+        return;
+      }
+
+      if (!speechResult.synthesized) {
+        setAudioNotice(
+          "Voice playback could not play; showing text response.",
+        );
+      }
+
+      // Resume listening without resetting the 60s user-speech inactivity timer
       setStatus("listening");
-      resetInactivityTimer();
     } catch {
+      if (
+        !mountedRef.current ||
+        capturedSession !== sessionGenRef.current ||
+        capturedTurn !== turnGenRef.current
+      ) {
+        return;
+      }
       setStatus("error");
       setErrorMsg("Error generating voice response.");
     }
   }
 
   async function startLiveSession() {
-    stopAll();
+    stopAll(false);
+    const capturedSession = sessionGenRef.current;
+
     setTranscript("");
     setResolution(null);
     setErrorMsg("");
+    errorMsgRef.current = "";
+    setAudioNotice("");
     setStatus("listening");
 
     if (Platform.OS !== "web") {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     }
 
-    // Unlock browser audio context on user gesture
+    // Unlock browser audio context on user gesture and always close temporary context cleanly
     if (typeof window !== "undefined") {
-      try {
-        const AudioCtxClass =
-          window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtxClass) {
-          const testCtx = new AudioCtxClass();
+      const AudioCtxClass =
+        window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtxClass) {
+        let testCtx: AudioContext | null = null;
+        try {
+          testCtx = new AudioCtxClass();
           if (testCtx.state === "suspended") {
             await testCtx.resume();
           }
+        } catch {
+          // ignore
+        } finally {
+          if (testCtx) {
+            await testCtx.close().catch(() => {});
+          }
         }
-      } catch {
-        // ignore
       }
+    }
+
+    if (!mountedRef.current || capturedSession !== sessionGenRef.current) {
+      return;
+    }
+
+    if (!deepgramCartesiaAdapter.isConfigured()) {
+      setStatus("error");
+      setErrorMsg(
+        "Cloud voice backend is not configured. Sign in via cloud mode to use live voice.",
+      );
+      return;
     }
 
     resetInactivityTimer();
 
     const started = await deepgramCartesiaAdapter.startLiveWebSocketSession(
-      selectedLanguage,
+      selectedLanguageRef.current,
       {
         onSpeechStarted: () => {
-          resetInactivityTimer();
+          if (capturedSession === sessionGenRef.current) {
+            resetInactivityTimer();
+          }
         },
         onInterimTranscript: (interim) => {
-          // Kinetic streaming: words flow live onto the screen as user speaks!
-          setTranscript(interim);
+          if (capturedSession === sessionGenRef.current) {
+            setTranscript(interim);
+          }
         },
         onFinalTranscript: (finalText) => {
-          handleSpokenTranscript(finalText);
+          if (capturedSession === sessionGenRef.current) {
+            void handleSpokenTranscript(finalText);
+          }
         },
         onVolumeChange: (vol) => {
-          setMicVolume(vol);
+          if (capturedSession === sessionGenRef.current) {
+            setMicVolume(vol);
+          }
         },
         onBargeIn: () => {
-          // Real-time interruption: user spoke over Bloom -> instantly cut off audio and listen!
+          if (capturedSession !== sessionGenRef.current) return;
+          cancelPendingNavigation();
+          turnGenRef.current++;
           setStatus("listening");
           setTranscript("");
           resetInactivityTimer();
         },
         onError: (err) => {
+          if (capturedSession !== sessionGenRef.current) return;
+          cancelPendingNavigation();
+          errorMsgRef.current = err;
           setStatus("error");
           setErrorMsg(err);
         },
-      }
+      },
     );
 
-    if (!started) {
+    if (
+      !started &&
+      mountedRef.current &&
+      capturedSession === sessionGenRef.current
+    ) {
       setStatus("error");
-      setErrorMsg("Could not connect to live voice session.");
+      if (!errorMsgRef.current) {
+        setErrorMsg("Could not connect to live voice session.");
+      }
     }
   }
 
   function handleMicPress() {
     if (status === "speaking") {
-      // User tapped while Bloom was speaking -> interrupt audio immediately
+      cancelPendingNavigation();
+      turnGenRef.current++;
       deepgramCartesiaAdapter.stopSpeaking();
       setStatus("listening");
       return;
     }
 
     if (status === "listening" || status === "processing") {
-      stopAll();
+      stopAll(false);
       return;
     }
 
-    startLiveSession();
+    void startLiveSession();
   }
 
-  // Audio-reactive scale factor based on microphone volume (clamped between 1.0 and 1.25)
   const volumeScale = Math.min(1.25, 1.0 + (micVolume / 100) * 0.4);
 
   return (
@@ -339,13 +563,13 @@ export function VoiceModal({
       animationType="fade"
       transparent={true}
       onRequestClose={() => {
-        stopAll();
+        stopAll(false);
         onClose();
       }}
     >
       <View style={localStyles.overlay}>
         <View style={localStyles.container}>
-          {/* Top Bar: Minimal Gemini-Style Header */}
+          {/* Top Bar */}
           <View style={localStyles.header}>
             <View style={localStyles.brandRow}>
               <View
@@ -358,21 +582,20 @@ export function VoiceModal({
               />
               <Text style={localStyles.brandTitle}>Bloom AI</Text>
 
-              {/* Status Pill */}
               <View style={localStyles.statusPill}>
                 <Text style={localStyles.statusPillText}>
                   {status === "idle" && "Ready"}
                   {status === "listening" && "Listening..."}
                   {status === "processing" && "Thinking..."}
                   {status === "speaking" && "Speaking..."}
-                  {status === "error" && "Notice"}
+                  {status === "error" && "Unavailable"}
                 </Text>
               </View>
             </View>
 
             <Touch
               onPress={() => {
-                stopAll();
+                stopAll(false);
                 onClose();
               }}
               label="Close"
@@ -383,7 +606,7 @@ export function VoiceModal({
             </Touch>
           </View>
 
-          {/* Minimal Language Pill Selector */}
+          {/* Language Pill Selector */}
           <View style={localStyles.langStrip}>
             {SUPPORTED_VOICE_LANGUAGES.map((lang) => {
               const active = selectedLanguage === lang.code;
@@ -391,7 +614,7 @@ export function VoiceModal({
                 <Touch
                   key={lang.code}
                   onPress={() => {
-                    stopAll();
+                    stopAll(false);
                     setSelectedLanguage(lang.code);
                   }}
                   style={
@@ -413,29 +636,24 @@ export function VoiceModal({
             })}
           </View>
 
-          {/* Center Visualizer: Gemini Live Glowing Reactive Orb */}
+          {/* Center Visualizer: Audio-Reactive Glowing Orb */}
           <View style={localStyles.visualizerBox}>
-            {/* Outer soundwave aura ring */}
             <Animated.View
               style={[
                 localStyles.waveRingOuter,
                 {
-                  transform: [
-                    { scale: waveAnim1 },
-                    { scale: volumeScale },
-                  ],
+                  transform: [{ scale: waveAnim1 }, { scale: volumeScale }],
                   opacity: status === "listening" ? 0.35 : 0.15,
                   borderColor:
                     status === "speaking"
                       ? "#06B6D4"
                       : status === "processing"
-                      ? "#818CF8"
-                      : "#10B981",
+                        ? "#818CF8"
+                        : "#10B981",
                 },
               ]}
             />
 
-            {/* Mid shimmer ring */}
             <Animated.View
               style={[
                 localStyles.waveRingMid,
@@ -446,13 +664,12 @@ export function VoiceModal({
                     status === "speaking"
                       ? "#38BDF8"
                       : status === "processing"
-                      ? "#A78BFA"
-                      : "#34D399",
+                        ? "#A78BFA"
+                        : "#34D399",
                 },
               ]}
             />
 
-            {/* Core Neural Interactive Mic Orb */}
             <Animated.View
               style={[
                 localStyles.coreOrb,
@@ -462,14 +679,14 @@ export function VoiceModal({
                     status === "speaking"
                       ? "#0891B2"
                       : status === "processing"
-                      ? "#6366F1"
-                      : "#059669",
+                        ? "#6366F1"
+                        : "#059669",
                   shadowColor:
                     status === "speaking"
                       ? "#06B6D4"
                       : status === "processing"
-                      ? "#818CF8"
-                      : "#10B981",
+                        ? "#818CF8"
+                        : "#10B981",
                 },
               ]}
             >
@@ -495,7 +712,7 @@ export function VoiceModal({
             </Text>
           </View>
 
-          {/* Kinetic Live Streaming Transcript Bubble */}
+          {/* Kinetic Live Streaming Transcript */}
           {transcript !== "" && (
             <View style={localStyles.transcriptBubble}>
               <Text style={localStyles.transcriptLabel}>You</Text>
@@ -505,7 +722,14 @@ export function VoiceModal({
             </View>
           )}
 
-          {/* Spoken Response & Unified Patient Knowledge Card */}
+          {/* Audio Fallback Notice */}
+          {audioNotice !== "" && (
+            <View style={localStyles.noticeBanner}>
+              <Text style={localStyles.noticeBannerText}>{audioNotice}</Text>
+            </View>
+          )}
+
+          {/* Spoken Response & Knowledge Card */}
           {resolution && (
             <View
               style={[
@@ -545,11 +769,10 @@ export function VoiceModal({
               {resolution.targetRoute && (
                 <View style={{ marginTop: 14 }}>
                   <Button
-                    title={
-                      resolution.isEmergencyAlert
-                        ? "Open Emergency SOS Support →"
-                        : `Open ${resolution.targetRoute.replace(/[\/()]/g, "")} →`
-                    }
+                    title={formatRouteLabel(
+                      resolution.targetRoute,
+                      resolution.isEmergencyAlert,
+                    )}
                     danger={resolution.isEmergencyAlert}
                     onPress={() => handleNavigate(resolution.targetRoute!)}
                   />
@@ -558,10 +781,10 @@ export function VoiceModal({
             </View>
           )}
 
-          {/* Subtle Hands-Free Session Footer */}
           {status === "listening" && (
             <Text style={localStyles.handsFreeFooter}>
-              Continuous hands-free conversation · Say &ldquo;Stop&rdquo; or pause to exit
+              Continuous hands-free conversation · Say &ldquo;Stop&rdquo; or
+              pause to exit
             </Text>
           )}
         </View>
@@ -725,6 +948,21 @@ const localStyles = StyleSheet.create({
     fontWeight: "500",
     color: "#E2E8F0",
     lineHeight: 22,
+  },
+  noticeBanner: {
+    backgroundColor: "rgba(245, 158, 11, 0.14)",
+    borderColor: "rgba(245, 158, 11, 0.35)",
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 6,
+  },
+  noticeBannerText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#FCD34D",
+    textAlign: "center",
   },
   responseCard: {
     backgroundColor: "rgba(16, 185, 129, 0.08)",

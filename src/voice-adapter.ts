@@ -170,14 +170,47 @@ export function resolveVoiceIntent(
   const t = rawTranscript.toLowerCase().trim();
   const langKey = RESPONSES.MEDICAL_REFUSAL[language] ? language : "en-IN";
 
-  // 1. Clinical Safety Guardrail (Highest Priority)
+  // 1. Emergency SOS (Highest Priority - overrides symptom keywords like "pain")
+  if (
+    t.includes("emergency") ||
+    t.includes("sos") ||
+    t.includes("ambulance") ||
+    t.includes("urgent help") ||
+    // Hindi
+    t.includes("आपातकाल") ||
+    t.includes("आपातकालीन") ||
+    t.includes("तुरंत मदद") ||
+    t.includes("इमरजेंसी") ||
+    t.includes("एम्बुलेंस") ||
+    // Kannada
+    t.includes("ತುರ್ತು") ||
+    t.includes("ಆಂಬ್ಯುಲೆನ್ಸ್") ||
+    t.includes("thurtu") ||
+    // Tamil
+    t.includes("அவசர") ||
+    t.includes("அவசரம்") ||
+    // Telugu
+    t.includes("అత్యవసర") ||
+    t.includes("అత్యవసరం")
+  ) {
+    return {
+      intent: "EMERGENCY_SOS",
+      confidence: 0.99,
+      targetRoute: "/sos",
+      spokenResponse: RESPONSES.EMERGENCY[langKey],
+      requiresConfirmation: true,
+      isMedicalQuery: false,
+    };
+  }
+
+  // 2. Clinical Safety Guardrail (Treatment / Diagnosis Refusal)
   // Matches English, Hindi (Devanagari + Roman), Kannada, Tamil, Telugu
   if (
     t.includes("headache") ||
     t.includes("fever") ||
     t.includes("diagnose") ||
-    t.includes("dose") ||
     t.includes("what medicine should i take") ||
+    t.includes("what should i take for") ||
     t.includes("cure") ||
     t.includes("symptom") ||
     t.includes("pain") ||
@@ -186,6 +219,8 @@ export function resolveVoiceIntent(
     t.includes("बुखार") ||
     t.includes("दर्द") ||
     t.includes("इलाज") ||
+    t.includes("कौन सी दवा") ||
+    t.includes("क्या दवा लूँ") ||
     t.includes("sirdard") ||
     t.includes("bukhar") ||
     t.includes("dawa len") ||
@@ -203,9 +238,11 @@ export function resolveVoiceIntent(
     // Tamil
     t.includes("தலைவலி") ||
     t.includes("காய்ச்சல்") ||
+    t.includes("என்ன மாத்திரை") ||
     // Telugu
     t.includes("తలనొప్పి") ||
-    t.includes("జ్వరం")
+    t.includes("జ్వరం") ||
+    t.includes("ఏ మందు")
   ) {
     return {
       intent: "MEDICAL_QUERY_REFUSAL",
@@ -216,41 +253,37 @@ export function resolveVoiceIntent(
     };
   }
 
-  // 2. Emergency SOS
+  // 3. Explicit Booking / Find Care (checked before generic "visit" or Tamil "பதிவு" so "Book a doctor visit" & "செவிலியரை பதிவு செய்" route to /discover)
   if (
-    t.includes("emergency") ||
-    t.includes("sos") ||
-    t.includes("ambulance") ||
-    t.includes("urgent help") ||
+    t.includes("book ") ||
+    t.includes("book a") ||
+    t.includes("find care") ||
+    t.includes("find doctor") ||
+    t.includes("find nurse") ||
+    t.includes("home care") ||
+    t.includes("home visit") ||
     // Hindi
-    t.includes("आपातकाल") ||
-    t.includes("मदद") ||
-    t.includes("इमरजेंसी") ||
-    t.includes("एम्बुलेंस") ||
-    t.includes("madad") ||
+    t.includes("बुक") ||
     // Kannada
-    t.includes("ತುರ್ತು") ||
-    t.includes("ಸಹಾಯ") ||
-    t.includes("ಆಂಬ್ಯುಲೆನ್ಸ್") ||
-    t.includes("thurtu") ||
+    t.includes("ಬುಕ್") ||
     // Tamil
-    t.includes("அவசரம்") ||
-    t.includes("உதவி") ||
+    t.includes("பதிவு செய்") ||
+    t.includes("செவிலியரை") ||
     // Telugu
-    t.includes("అత్యవసరం") ||
-    t.includes("సహాయం")
+    t.includes("బుక్") ||
+    t.includes("బుకింగ్")
   ) {
     return {
-      intent: "EMERGENCY_SOS",
-      confidence: 0.99,
-      targetRoute: "/sos",
-      spokenResponse: RESPONSES.EMERGENCY[langKey],
-      requiresConfirmation: true,
+      intent: "NAVIGATE_BOOKING",
+      confidence: 0.94,
+      targetRoute: "/discover",
+      spokenResponse: RESPONSES.BOOKING[langKey],
+      requiresConfirmation: false,
       isMedicalQuery: false,
     };
   }
 
-  // 3. Navigation: Medicines
+  // 4. Navigation: Medicines
   if (
     t.includes("medicine") ||
     t.includes("pill") ||
@@ -289,7 +322,7 @@ export function resolveVoiceIntent(
     };
   }
 
-  // 4. Navigation: Appointments / Visits
+  // 5. Navigation: Appointments / Visits
   if (
     t.includes("appointment") ||
     t.includes("visit") ||
@@ -325,7 +358,7 @@ export function resolveVoiceIntent(
     };
   }
 
-  // 5. Navigation: Records & Reports
+  // 6. Navigation: Records & Reports
   if (
     t.includes("report") ||
     t.includes("record") ||
@@ -359,27 +392,22 @@ export function resolveVoiceIntent(
     };
   }
 
-  // 6. Navigation: Booking / Find Care
+  // 7. Fallback Booking / Find Care by specialist/role mention
   if (
     t.includes("book") ||
     t.includes("doctor") ||
     t.includes("nurse") ||
     t.includes("physio") ||
-    t.includes("find care") ||
     t.includes("specialist") ||
     // Hindi
-    t.includes("बुक") ||
     t.includes("डॉक्टर") ||
     t.includes("नर्स") ||
     // Kannada
     t.includes("ವೈದ್ಯ") ||
-    t.includes("ಬುಕ್") ||
     t.includes("ಶುಶ್ರೂಷಕಿ") ||
     // Tamil
-    t.includes("பதிவு") ||
     t.includes("மருத்துவர்") ||
     // Telugu
-    t.includes("బుకింగ్") ||
     t.includes("వైద్యుడు")
   ) {
     return {
@@ -508,30 +536,29 @@ export class MultilingualSpeechAdapter implements SpeechProviderAdapter {
           }
 
           let settled = false;
-          const finish = () => {
+          const finish = (synthesized = true) => {
             if (!settled) {
               settled = true;
-              resolve({ synthesized: true, durationMs: 1200 });
+              resolve({ synthesized, durationMs: synthesized ? 1200 : 0 });
             }
           };
 
-          utterance.onend = finish;
-          utterance.onerror = finish;
+          utterance.onend = () => finish(true);
+          utterance.onerror = () => finish(false);
 
           const estimatedDuration = Math.max(2200, text.length * 85);
-          setTimeout(finish, estimatedDuration + 1000);
+          setTimeout(() => finish(true), estimatedDuration + 1000);
 
           window.speechSynthesis.speak(utterance);
         } catch {
-          resolve({ synthesized: false, durationMs: 1000 });
+          resolve({ synthesized: false, durationMs: 0 });
         }
       });
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
     return {
-      synthesized: true,
-      durationMs: 1500,
+      synthesized: false,
+      durationMs: 0,
     };
   }
 
@@ -606,14 +633,18 @@ export class MultilingualSpeechAdapter implements SpeechProviderAdapter {
       };
 
       recognition.onend = () => {
-        this.activeRecognition = null;
+        if (this.activeRecognition === recognition) {
+          this.activeRecognition = null;
+        }
         callbacks.onEnd?.();
       };
 
       recognition.start();
 
       return () => {
-        this.stopLiveListening();
+        if (this.activeRecognition === recognition) {
+          this.stopLiveListening();
+        }
       };
     } catch (err: any) {
       callbacks.onError?.(err?.message || "Could not start speech recognition");

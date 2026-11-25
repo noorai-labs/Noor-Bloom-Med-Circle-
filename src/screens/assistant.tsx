@@ -1,4 +1,4 @@
-﻿import { cloudMode } from "../cloud-config";
+import { cloudMode } from "../cloud-config";
 import { providerFor } from "../provider-display";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
