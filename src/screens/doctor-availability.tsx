@@ -118,7 +118,7 @@ function ErrorCloudIllustration() {
 }
 
 export function DoctorAvailabilityScreen() {
-  const { notify, cloud } = useClinic();
+  const { notify, cloud, state } = useClinic();
   const [schedule, setSchedule] = useState<DaySchedule[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +127,14 @@ export function DoctorAvailabilityScreen() {
   useEffect(() => {
     scheduleRef.current = schedule;
   }, [schedule]);
+  const isDirtyRef = useRef(false);
+  const cloudRef = useRef(cloud);
+  useEffect(() => {
+    cloudRef.current = cloud;
+  }, [cloud]);
+  const hasCloud = Boolean(cloud);
+  const accountKey = state.session?.identifier ?? "";
+  const lastAccountRef = useRef(accountKey);
   const [previewFilter, setPreviewFilter] = useState(cloud ? "Live" : "Active");
   const [reloadTicket, setReloadTicket] = useState(0);
 
@@ -135,9 +143,13 @@ export function DoctorAvailabilityScreen() {
 
   useEffect(() => {
     let active = true;
-    if (!cloud) {
+    if (lastAccountRef.current !== accountKey) {
+      lastAccountRef.current = accountKey;
+      isDirtyRef.current = false;
+    }
+    if (!hasCloud) {
       const timer = setTimeout(() => {
-        if (!active) return;
+        if (!active || isDirtyRef.current) return;
         setSchedule(DEFAULT_WEEK);
         setLoading(false);
         setError(null);
@@ -150,15 +162,16 @@ export function DoctorAvailabilityScreen() {
 
     void (async () => {
       await Promise.resolve();
-      if (!active) return;
+      const activeCloud = cloudRef.current;
+      if (!active || !activeCloud) return;
       setLoading(true);
       setError(null);
       try {
-        const res = await cloud.availability.get();
-        if (!active) return;
+        const res = await activeCloud.availability.get();
+        if (!active || isDirtyRef.current) return;
         setSchedule(res.schedule as DaySchedule[]);
       } catch (e) {
-        if (!active) return;
+        if (!active || isDirtyRef.current) return;
         if (e instanceof CloudError && e.status === 404) {
           setSchedule(DEFAULT_WEEK);
         } else {
@@ -176,14 +189,16 @@ export function DoctorAvailabilityScreen() {
     return () => {
       active = false;
     };
-  }, [cloud, reloadTicket]);
+  }, [accountKey, hasCloud, reloadTicket]);
 
   const loadAvailability = useCallback(() => {
+    isDirtyRef.current = false;
     setReloadTicket((t) => t + 1);
   }, []);
 
   function handleToggleDay(day: DayKey) {
     if (!schedule) return;
+    isDirtyRef.current = true;
     setSchedule(
       schedule.map((item) =>
         item.day === day ? { ...item, enabled: !item.enabled } : item,
@@ -202,13 +217,17 @@ export function DoctorAvailabilityScreen() {
             submitted as AvailabilityDay[],
           );
           if (scheduleRef.current === submitted) {
+            isDirtyRef.current = false;
             setSchedule(saved.schedule as DaySchedule[]);
           }
         } catch (e) {
           if (!(e instanceof CloudError && e.status === 404)) {
             throw e;
           }
+          isDirtyRef.current = false;
         }
+      } else {
+        isDirtyRef.current = false;
       }
       notify("Weekly availability saved successfully.");
     } catch (e) {
@@ -221,12 +240,14 @@ export function DoctorAvailabilityScreen() {
   }
 
   function handleAddHoursFromEmpty() {
+    isDirtyRef.current = true;
     setSchedule(DEFAULT_WEEK);
     if (!cloud) setPreviewFilter("Active");
   }
 
   function handleSelectHoursPreset(start: string, end: string) {
     if (!schedule || !editingDay) return;
+    isDirtyRef.current = true;
     setSchedule(
       schedule.map((item) =>
         item.day === editingDay

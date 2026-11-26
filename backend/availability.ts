@@ -38,6 +38,92 @@ async function isVerifiedOrAssignedDoctor(
   return !!member;
 }
 
+const WEEKDAY_KEYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+function parseSlotTo24Hour(timeStr: string): string | null {
+  const trimmed = timeStr.trim();
+  if (TIME_RE.test(trimmed)) return trimmed;
+  const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(trimmed);
+  if (!match) return null;
+  let hours = Number(match[1]);
+  const minutes = match[2];
+  const meridiem = match[3].toUpperCase();
+  if (hours < 1 || hours > 12) return null;
+  if (meridiem === "AM") {
+    if (hours === 12) hours = 0;
+  } else if (hours !== 12) {
+    hours += 12;
+  }
+  return `${String(hours).padStart(2, "0")}:${minutes}`;
+}
+
+export async function checkDoctorAvailabilityForSlot(
+  env: { DB: D1Database },
+  providerId: string,
+  date: string,
+  time: string,
+): Promise<void> {
+  const parsedDate = new Date(date + "T12:00:00Z");
+  if (Number.isNaN(parsedDate.getTime())) {
+    throw new AvailabilityError(400, "Choose a valid appointment date.");
+  }
+  const hhmm = parseSlotTo24Hour(time);
+  if (!hhmm) {
+    throw new AvailabilityError(400, "Choose a valid appointment time.");
+  }
+  let row: { schedule?: string } | null;
+  try {
+    row = await env.DB.prepare(
+      "SELECT schedule FROM doctor_availability WHERE user_id=?",
+    )
+      .bind(providerId)
+      .first<{ schedule?: string }>();
+  } catch {
+    throw new AvailabilityError(
+      503,
+      "Could not verify doctor availability. Please try again.",
+    );
+  }
+  if (!row || typeof row.schedule !== "string") {
+    throw new AvailabilityError(
+      400,
+      "This doctor has not published available hours yet.",
+    );
+  }
+  let schedule: AvailabilityDay[];
+  try {
+    const parsed = JSON.parse(row.schedule);
+    if (!Array.isArray(parsed)) {
+      throw new Error("Invalid schedule");
+    }
+    schedule = parsed as AvailabilityDay[];
+  } catch {
+    throw new AvailabilityError(
+      503,
+      "Could not verify doctor availability. Please try again.",
+    );
+  }
+  if (schedule.length === 0) {
+    throw new AvailabilityError(
+      400,
+      "This doctor has not published available hours yet.",
+    );
+  }
+  const weekdayKey = WEEKDAY_KEYS[parsedDate.getUTCDay()];
+  const dayRule = schedule.find((d) => d.day === weekdayKey);
+  if (
+    !dayRule ||
+    !dayRule.enabled ||
+    hhmm < dayRule.startTime ||
+    hhmm >= dayRule.endTime
+  ) {
+    throw new AvailabilityError(
+      400,
+      "Selected time is outside the doctor's available hours.",
+    );
+  }
+}
+
 export function validateSchedule(input: unknown): AvailabilityDay[] {
   if (!Array.isArray(input) || input.length > 7) {
     throw new AvailabilityError(400, "Provide up to 7 weekly schedule days.");

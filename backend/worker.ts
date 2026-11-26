@@ -25,7 +25,11 @@ import {
   type CallEnv,
 } from "./calls";
 import { providerRoute, ProviderError } from "./providers";
-import { availabilityRoute, AvailabilityError } from "./availability";
+import {
+  availabilityRoute,
+  AvailabilityError,
+  checkDoctorAvailabilityForSlot,
+} from "./availability";
 export { MedicineReminderScheduler } from "./reminders";
 
 type Env = ReminderEnv &
@@ -625,6 +629,12 @@ async function route(
           ),
         };
       }
+      await checkDoctorAvailabilityForSlot(
+        env,
+        action.visit.providerId,
+        action.visit.date,
+        action.visit.time,
+      );
     }
     let next: ClinicState;
     try {

@@ -548,11 +548,15 @@ export function DateTime({
   onLoadingChange?: (loading: boolean) => void;
 }) {
   const { state, cloud } = useClinic();
+  const isStaticProvider =
+    doctors.some((p) => p.id === providerId) ||
+    nurses.some((p) => p.id === providerId);
   const [providerSchedule, setProviderSchedule] = useState<
     AvailabilityDay[] | null
   >(null);
+  const [scheduleError, setScheduleError] = useState(false);
   const [scheduleLoading, setScheduleLoading] = useState(
-    cloudMode && !!cloud && !!providerId,
+    cloudMode && !!cloud && !!providerId && !isStaticProvider,
   );
 
   useEffect(() => {
@@ -560,18 +564,23 @@ export function DateTime({
     void (async () => {
       await Promise.resolve();
       if (!active) return;
-      if (!cloudMode || !cloud || !providerId) {
+      if (!cloudMode || !cloud || !providerId || isStaticProvider) {
+        setScheduleError(false);
         setScheduleLoading(false);
         onLoadingChange?.(false);
         return;
       }
+      setScheduleError(false);
       setScheduleLoading(true);
       onLoadingChange?.(true);
       try {
         const res = await cloud.availability.get(providerId);
         if (active) setProviderSchedule(res.schedule);
       } catch {
-        if (active) setProviderSchedule(null);
+        if (active) {
+          setProviderSchedule(null);
+          setScheduleError(true);
+        }
       } finally {
         if (active) {
           setScheduleLoading(false);
@@ -582,7 +591,7 @@ export function DateTime({
     return () => {
       active = false;
     };
-  }, [cloud, onLoadingChange, providerId]);
+  }, [cloud, isStaticProvider, onLoadingChange, providerId]);
 
   const weekdayKey = WEEKDAY_KEYS[new Date(date + "T12:00:00").getDay()];
   const dayRule =
@@ -591,14 +600,16 @@ export function DateTime({
       : undefined;
 
   const availableTimes =
-    providerSchedule && providerSchedule.length > 0
-      ? !dayRule || !dayRule.enabled
+    !cloudMode || isStaticProvider
+      ? times
+      : scheduleError || !providerSchedule || providerSchedule.length === 0
         ? []
-        : times.filter((slot) => {
-            const hhmm = to24Hour(slot);
-            return hhmm >= dayRule.startTime && hhmm < dayRule.endTime;
-          })
-      : times;
+        : !dayRule || !dayRule.enabled
+          ? []
+          : times.filter((slot) => {
+              const hhmm = to24Hour(slot);
+              return hhmm >= dayRule.startTime && hhmm < dayRule.endTime;
+            });
 
   const timeStillValid = !time || availableTimes.includes(time);
 
@@ -672,7 +683,9 @@ export function DateTime({
         <Body muted>Loading available times…</Body>
       ) : availableTimes.length === 0 ? (
         <Body muted>
-          Doctor is not available on this day. Please select another day.
+          {scheduleError
+            ? "Could not load doctor's availability. Please try again later."
+            : "Doctor is not available on this day. Please select another day."}
         </Body>
       ) : (
         <View style={styles.wrap}>

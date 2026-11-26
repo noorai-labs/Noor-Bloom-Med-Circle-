@@ -94,6 +94,7 @@ export function DoctorVisitCard({ visit }: { visit: Visit }) {
 export function DoctorHome() {
   const { state, cloud, notify } = useClinic();
   const hasAssignedWorkspace = !cloud || state.session?.role === "Doctor";
+  const hasAnyDoctorSpace = !!cloud?.spaces.some((s) => s.role === "Doctor");
   const visits = hasAssignedWorkspace ? visibleVisits(state) : [];
   const today = visits.filter(
     (v) => v.date === dayKey() && v.status !== "Cancelled",
@@ -287,8 +288,9 @@ export function DoctorHome() {
               </View>
             </View>
             <Body style={{ fontSize: 13 }}>
-              No patient workspace is assigned yet. Find an organization
-              workspace below and request to join.
+              {hasAnyDoctorSpace
+                ? "Switch to an assigned Doctor care space in Account to view patients and consultations."
+                : "No patient workspace is assigned yet. Find an organization workspace below and request to join."}
             </Body>
           </Card>
         )}
