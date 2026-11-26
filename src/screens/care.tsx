@@ -744,6 +744,11 @@ export function BookingScreen() {
     (typeof state.visits)[number] | null
   >(null);
   const preSubmitIdsRef = useRef<Set<string>>(new Set());
+  const submittedSlotRef = useRef<{
+    providerId: string;
+    date: string;
+    time: string;
+  } | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [service, setService] = useState(
     isNurse ? "Home nursing" : "Home Visit",
@@ -770,20 +775,25 @@ export function BookingScreen() {
       return () => clearTimeout(timer);
     }
     if (!cloud || cloud.status === "Synced") {
+      const target = submittedSlotRef.current || {
+        providerId: p.id,
+        date,
+        time,
+      };
       const matched =
         state.visits.find(
           (v) =>
             !preSubmitIdsRef.current.has(v.id) &&
-            v.providerId === p.id &&
-            v.date === date &&
-            v.time === time &&
+            v.providerId === target.providerId &&
+            v.date === target.date &&
+            v.time === target.time &&
             !terminal(v),
         ) ||
         state.visits.find(
           (v) =>
-            v.providerId === p.id &&
-            v.date === date &&
-            v.time === time &&
+            v.providerId === target.providerId &&
+            v.date === target.date &&
+            v.time === target.time &&
             !terminal(v),
         );
       if (matched) {
@@ -1040,6 +1050,7 @@ export function BookingScreen() {
               setSubmitError("");
               setSubmitting(true);
               preSubmitIdsRef.current = new Set(state.visits.map((v) => v.id));
+              submittedSlotRef.current = { providerId: p.id, date, time };
               const ok = dispatch({
                 type: "book",
                 visit: {
@@ -1067,6 +1078,7 @@ export function BookingScreen() {
           <Button
             title="Edit date & address"
             secondary
+            disabled={submitting}
             onPress={() => setStep(1)}
           />
         </Card>
