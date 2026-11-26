@@ -600,19 +600,25 @@ async function route(
       };
     }
     let stateForTransition = snapshot.state;
-    if (
-      action.type === "book" &&
-      !snapshot.state.approved.includes(action.visit.providerId)
-    ) {
+    if (action.type === "book") {
       const verifiedProvider = await env.DB.prepare(
         "SELECT 1 FROM verification_applications WHERE user_id=? AND status='Approved' AND valid_until > ? AND kind IN ('Doctor','Nurse')",
       )
         .bind(action.visit.providerId, verificationDay())
         .first();
       if (verifiedProvider) {
+        if (!snapshot.state.approved.includes(action.visit.providerId)) {
+          stateForTransition = {
+            ...snapshot.state,
+            approved: [...snapshot.state.approved, action.visit.providerId],
+          };
+        }
+      } else if (snapshot.state.approved.includes(action.visit.providerId)) {
         stateForTransition = {
           ...snapshot.state,
-          approved: [...snapshot.state.approved, action.visit.providerId],
+          approved: snapshot.state.approved.filter(
+            (id) => id !== action.visit.providerId,
+          ),
         };
       }
     }

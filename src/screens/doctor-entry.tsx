@@ -98,6 +98,13 @@ export default function DoctorEntry() {
   const [step, setStep] = useState<"setup" | "org-search">(
     params.step === "org-search" ? "org-search" : "setup",
   );
+  const [prevParamStep, setPrevParamStep] = useState(params.step);
+  if (params.step !== prevParamStep) {
+    setPrevParamStep(params.step);
+    if (params.step === "org-search") {
+      setStep("org-search");
+    }
+  }
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
@@ -235,8 +242,8 @@ export default function DoctorEntry() {
     });
   }
 
-  // Dedicated Step: Organization Search & Selection (for new applicant only)
-  if (!application && step === "org-search") {
+  // Dedicated Step: Organization Search & Selection (new or editable applicant)
+  if ((!application || isNeedsInfo) && step === "org-search") {
     return (
       <Screen title="Select your organization" noGuard>
         <Touch

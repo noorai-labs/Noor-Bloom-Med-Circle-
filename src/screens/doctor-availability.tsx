@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Modal,
   ScrollView,
@@ -123,6 +123,10 @@ export function DoctorAvailabilityScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const scheduleRef = useRef(schedule);
+  useEffect(() => {
+    scheduleRef.current = schedule;
+  }, [schedule]);
   const [previewFilter, setPreviewFilter] = useState(cloud ? "Live" : "Active");
   const [reloadTicket, setReloadTicket] = useState(0);
 
@@ -189,14 +193,17 @@ export function DoctorAvailabilityScreen() {
 
   async function handleSaveAvailability() {
     if (!schedule || saving) return;
+    const submitted = schedule;
     setSaving(true);
     try {
       if (cloud) {
         try {
           const saved = await cloud.availability.save(
-            schedule as AvailabilityDay[],
+            submitted as AvailabilityDay[],
           );
-          setSchedule(saved.schedule as DaySchedule[]);
+          if (scheduleRef.current === submitted) {
+            setSchedule(saved.schedule as DaySchedule[]);
+          }
         } catch (e) {
           if (!(e instanceof CloudError && e.status === 404)) {
             throw e;
@@ -244,7 +251,7 @@ export function DoctorAvailabilityScreen() {
               ? "loading"
               : error
                 ? "error"
-                : schedule && schedule.length > 0 && schedule.some((d) => d.enabled)
+                : schedule && schedule.length > 0
                   ? "active"
                   : "empty";
 

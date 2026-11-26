@@ -169,12 +169,6 @@ export function FamilyConsentScreen() {
     try {
       const token = getToken ? (await getToken()) ?? undefined : undefined;
       await familyApi.accept(link.id, token);
-      if (!state.profile.consent) {
-        dispatch({
-          type: "profile",
-          profile: { ...state.profile, consent: true },
-        });
-      }
       notify("Family access approved.");
       await loadLinks();
     } catch (e) {

@@ -286,7 +286,11 @@ export async function fetchWorkspaces(
   orgId?: string,
   query = "",
 ): Promise<OrganizationWorkspace[]> {
-  if (!isDevMockAllowed) return [];
+  if (!isDevMockAllowed) {
+    throw new Error(
+      "Organization workspace search is not available yet. Please check back soon.",
+    );
+  }
   return searchWorkspaces(orgId, query);
 }
 

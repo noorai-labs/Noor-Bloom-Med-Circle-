@@ -232,15 +232,13 @@ export function GeminiVoiceOverlay({
   onNavigate,
 }: GeminiVoiceOverlayProps) {
   const { state } = useClinic();
+  const inputRef = React.useRef<React.ComponentRef<typeof TextInput>>(null);
   const [inputText, setInputText] = useState("");
-  const [status, setStatus] = useState<"listening" | "thinking" | "speaking">(
-    "listening",
-  );
+  const [status, setStatus] = useState<"ready" | "thinking">("ready");
   const [lastQuery, setLastQuery] = useState<string | null>(null);
   const [response, setResponse] = useState<string>(
-    "Hi, I’m Bloom! How can I support your care journey today?",
+    "Hi, I’m Bloom! Type a question or tap a quick prompt below.",
   );
-  const [isVoiceActive, setIsVoiceActive] = useState(true);
 
   // Core pulsing animation for Bloom AI emblem
   const [pulseAnim] = useState(() => new Animated.Value(1));
@@ -327,12 +325,8 @@ export function GeminiVoiceOverlay({
       }
 
       setResponse(reply);
-      setStatus("speaking");
+      setStatus("ready");
       setInputText("");
-
-      setTimeout(() => {
-        setStatus("listening");
-      }, 2500);
     }, 600);
   }
 
@@ -367,20 +361,14 @@ export function GeminiVoiceOverlay({
                         styles.statusDot,
                         {
                           backgroundColor:
-                            status === "thinking"
-                              ? "#F59E0B"
-                              : status === "speaking"
-                                ? "#10B981"
-                                : "#00F2FE",
+                            status === "thinking" ? "#F59E0B" : "#10B981",
                         },
                       ]}
                     />
                     <Text style={styles.statusText}>
                       {status === "thinking"
                         ? "Thinking…"
-                        : status === "speaking"
-                          ? "Speaking"
-                          : "Listening to you"}
+                        : "Ready — type or tap a prompt"}
                     </Text>
                   </View>
                 </View>
@@ -455,7 +443,7 @@ export function GeminiVoiceOverlay({
             {/* Fluid Undulating Waveform Ribbon Area */}
             <View style={styles.waveformSection}>
               <FluidWaveformRibbon
-                active={isVoiceActive}
+                active={status === "thinking"}
                 thinking={status === "thinking"}
               />
 
@@ -494,11 +482,18 @@ export function GeminiVoiceOverlay({
                 >
                   <Pressable
                     onPress={() => {
-                      setIsVoiceActive((v) => !v);
-                      if (!isVoiceActive) {
-                        setStatus("listening");
+                      if (inputText.trim()) {
+                        handleCommand(inputText);
+                      } else {
+                        inputRef.current?.focus();
                       }
                     }}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      inputText.trim()
+                        ? "Send question to Bloom"
+                        : "Focus question input"
+                    }
                     style={styles.coreOrbPressable}
                   >
                     <LinearGradient
@@ -508,7 +503,7 @@ export function GeminiVoiceOverlay({
                       style={styles.coreOrbGradient}
                     >
                       <Icon
-                        name={isVoiceActive ? "mic" : "mic-off"}
+                        name="sparkles"
                         size={28}
                         color="white"
                       />
@@ -521,6 +516,7 @@ export function GeminiVoiceOverlay({
             {/* Bottom Input Field for Text Input */}
             <View style={styles.inputContainer}>
               <TextInput
+                ref={inputRef}
                 value={inputText}
                 onChangeText={setInputText}
                 placeholder="Ask Bloom anything about your care…"

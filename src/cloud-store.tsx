@@ -115,7 +115,7 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
         setStatus("Connecting");
         setError("");
         const available = await cloudRequest<CareSpace[]>(jwt, "/v1/spaces");
-        const audience = selected ? null : await getLoginAudience();
+        const audience = await getLoginAudience();
         let isDoctorApproved = available.some((space) => space.role === "Doctor");
         if (!isDoctorApproved && audience === "Doctor") {
           const verification = await cloudRequest<{

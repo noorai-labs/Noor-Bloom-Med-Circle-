@@ -8,6 +8,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { router } from "expo-router";
 
 // Context to trigger the Bloom AI Voice Agent overlay from anywhere in the app
 interface VoiceAgentContextType {
@@ -299,7 +300,15 @@ export function BloomVoiceAgentOverlay({
           />
 
           {/* Center Orb Touch Target */}
-          <Pressable onPress={onClose} style={styles.emblemTouch} />
+          <Pressable
+            onPress={() => {
+              onClose();
+              router.push("/assistant");
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Open Bloom assistant"
+            style={styles.emblemTouch}
+          />
         </Animated.View>
       </Pressable>
     </Modal>

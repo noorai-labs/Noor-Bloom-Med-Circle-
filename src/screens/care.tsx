@@ -132,23 +132,43 @@ export function DiscoverScreen() {
           ],
         ];
 
+  const loadAllCloudProviders = useCallback(
+    async (signal?: { active: boolean }) => {
+      if (!cloudMode || !cloud) return [];
+      const baseQuery = {
+        kind: (mode === "Doctors" ? "Doctor" : "Nurse") as "Doctor" | "Nurse",
+        specialty: specialty === "All" ? undefined : specialty,
+        language: language === "All" ? undefined : language,
+        mode: (consultMode === "Home Visit"
+          ? "in-person"
+          : consultMode === "Online Consultation"
+            ? "video"
+            : "all") as "in-person" | "video" | "all",
+        limit: 50,
+      };
+      const all: Parameters<typeof cacheCloudProviders>[0] = [];
+      let offset = 0;
+      for (let page = 0; page < 20; page++) {
+        const response = await cloud.providers({ ...baseQuery, offset });
+        if (signal && !signal.active) return all;
+        all.push(...response.providers);
+        if (!response.pagination?.hasMore || response.providers.length === 0) {
+          break;
+        }
+        offset += response.providers.length;
+      }
+      return all;
+    },
+    [cloud, mode, specialty, language, consultMode],
+  );
+
   const fetchProviders = useCallback(async () => {
     if (!cloudMode || !cloud) return;
     setLoading(true);
     setLoadError("");
     try {
-      const response = await cloud.providers({
-        kind: mode === "Doctors" ? "Doctor" : "Nurse",
-        specialty: specialty === "All" ? undefined : specialty,
-        language: language === "All" ? undefined : language,
-        mode:
-          consultMode === "Home Visit"
-            ? "in-person"
-            : consultMode === "Online Consultation"
-              ? "video"
-              : "all",
-      });
-      setCloudList(cacheCloudProviders(response.providers));
+      const providersList = await loadAllCloudProviders();
+      setCloudList(cacheCloudProviders(providersList));
     } catch (e) {
       setCloudList([]);
       setLoadError(
@@ -159,32 +179,22 @@ export function DiscoverScreen() {
     } finally {
       setLoading(false);
     }
-  }, [cloud, mode, specialty, language, consultMode]);
+  }, [cloud, loadAllCloudProviders]);
 
   useEffect(() => {
     if (!cloudMode || !cloud) return;
-    let active = true;
+    const signal = { active: true };
     void (async () => {
       await Promise.resolve();
-      if (!active) return;
+      if (!signal.active) return;
       setLoading(true);
       setLoadError("");
       try {
-        const response = await cloud.providers({
-          kind: mode === "Doctors" ? "Doctor" : "Nurse",
-          specialty: specialty === "All" ? undefined : specialty,
-          language: language === "All" ? undefined : language,
-          mode:
-            consultMode === "Home Visit"
-              ? "in-person"
-              : consultMode === "Online Consultation"
-                ? "video"
-                : "all",
-        });
-        if (!active) return;
-        setCloudList(cacheCloudProviders(response.providers));
+        const providersList = await loadAllCloudProviders(signal);
+        if (!signal.active) return;
+        setCloudList(cacheCloudProviders(providersList));
       } catch (e) {
-        if (!active) return;
+        if (!signal.active) return;
         setCloudList([]);
         setLoadError(
           e instanceof Error
@@ -192,13 +202,13 @@ export function DiscoverScreen() {
             : "Couldn't load care professionals. Please try again.",
         );
       } finally {
-        if (active) setLoading(false);
+        if (signal.active) setLoading(false);
       }
     })();
     return () => {
-      active = false;
+      signal.active = false;
     };
-  }, [cloud, mode, specialty, language, consultMode, reloadTicket]);
+  }, [cloud, loadAllCloudProviders, reloadTicket]);
 
   const rawList: DisplayProvider[] = cloudMode
     ? cloudList
@@ -527,6 +537,7 @@ export function DateTime({
   time,
   setTime,
   ignoreId,
+  onLoadingChange,
 }: {
   providerId: string;
   date: string;
@@ -534,27 +545,44 @@ export function DateTime({
   time: string;
   setTime: (t: string) => void;
   ignoreId?: string;
+  onLoadingChange?: (loading: boolean) => void;
 }) {
   const { state, cloud } = useClinic();
   const [providerSchedule, setProviderSchedule] = useState<
     AvailabilityDay[] | null
   >(null);
+  const [scheduleLoading, setScheduleLoading] = useState(
+    cloudMode && !!cloud && !!providerId,
+  );
 
   useEffect(() => {
-    if (!cloudMode || !cloud || !providerId) return;
     let active = true;
-    void cloud.availability
-      .get(providerId)
-      .then((res) => {
+    void (async () => {
+      await Promise.resolve();
+      if (!active) return;
+      if (!cloudMode || !cloud || !providerId) {
+        setScheduleLoading(false);
+        onLoadingChange?.(false);
+        return;
+      }
+      setScheduleLoading(true);
+      onLoadingChange?.(true);
+      try {
+        const res = await cloud.availability.get(providerId);
         if (active) setProviderSchedule(res.schedule);
-      })
-      .catch(() => {
+      } catch {
         if (active) setProviderSchedule(null);
-      });
+      } finally {
+        if (active) {
+          setScheduleLoading(false);
+          onLoadingChange?.(false);
+        }
+      }
+    })();
     return () => {
       active = false;
     };
-  }, [cloud, providerId]);
+  }, [cloud, onLoadingChange, providerId]);
 
   const weekdayKey = WEEKDAY_KEYS[new Date(date + "T12:00:00").getDay()];
   const dayRule =
@@ -571,6 +599,14 @@ export function DateTime({
             return hhmm >= dayRule.startTime && hhmm < dayRule.endTime;
           })
       : times;
+
+  const timeStillValid = !time || availableTimes.includes(time);
+
+  useEffect(() => {
+    if (!scheduleLoading && !timeStillValid) {
+      setTime("");
+    }
+  }, [scheduleLoading, setTime, timeStillValid]);
 
   return (
     <>
@@ -632,7 +668,9 @@ export function DateTime({
         })}
       </ScrollView>
       <Label>CHOOSE A TIME</Label>
-      {availableTimes.length === 0 ? (
+      {scheduleLoading ? (
+        <Body muted>Loading available times…</Body>
+      ) : availableTimes.length === 0 ? (
         <Body muted>
           Doctor is not available on this day. Please select another day.
         </Body>
@@ -687,6 +725,7 @@ export function BookingScreen() {
   );
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
   const [service, setService] = useState(
     isNurse ? "Home nursing" : "Home Visit",
   );
@@ -800,14 +839,14 @@ export function BookingScreen() {
           <Title small>How can we care for you?</Title>
           <Chips
             values={
-              nursing(p.id)
+              isNurse
                 ? ["Home nursing", "Elder care", "Post-operative care"]
                 : ["Home Visit", "Online Consultation"]
             }
             value={service}
             onChange={setService}
           />
-          {nursing(p.id) && (
+          {isNurse && (
             <>
               <Label>Visit duration / frequency</Label>
               <Chips
@@ -846,6 +885,7 @@ export function BookingScreen() {
             setDate={setDate}
             time={time}
             setTime={setTime}
+            onLoadingChange={setScheduleLoading}
           />
           {service !== "Online Consultation" && (
             <Field
@@ -858,7 +898,9 @@ export function BookingScreen() {
           <Button
             title="Review appointment"
             disabled={
-              !time || (service !== "Online Consultation" && !address.trim())
+              scheduleLoading ||
+              !time ||
+              (service !== "Online Consultation" && !address.trim())
             }
             onPress={() => setStep(2)}
           />

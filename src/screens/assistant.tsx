@@ -33,11 +33,6 @@ export default function AssistantScreen() {
 
   const handleClose = () => {
     setShowVoiceOverlay(false);
-    if (router.canGoBack()) {
-      router.back();
-    } else {
-      router.replace("/(tabs)");
-    }
   };
 
   if (cloudMode)
@@ -110,17 +105,23 @@ export default function AssistantScreen() {
     );
 
   return (
-    <>
-      <GeminiVoiceOverlay
-        visible={showVoiceOverlay}
-        onClose={handleClose}
-      />
-      <DemoAssistantScreen onOpenVoice={() => setShowVoiceOverlay(true)} />
-    </>
+    <DemoAssistantScreen
+      showVoiceOverlay={showVoiceOverlay}
+      onOpenVoice={() => setShowVoiceOverlay(true)}
+      onCloseVoice={handleClose}
+    />
   );
 }
 
-function DemoAssistantScreen({ onOpenVoice }: { onOpenVoice: () => void }) {
+function DemoAssistantScreen({
+  showVoiceOverlay,
+  onOpenVoice,
+  onCloseVoice,
+}: {
+  showVoiceOverlay: boolean;
+  onOpenVoice: () => void;
+  onCloseVoice: () => void;
+}) {
   const { state } = useClinic();
   const [messages, setMessages] = useState([
     {
@@ -189,6 +190,10 @@ function DemoAssistantScreen({ onOpenVoice }: { onOpenVoice: () => void }) {
       title="A little help from Bloom"
       subtitle="Your companion for navigating care."
     >
+      <GeminiVoiceOverlay
+        visible={showVoiceOverlay}
+        onClose={onCloseVoice}
+      />
       <Touch label="Launch Bloom Voice AI" onPress={onOpenVoice}>
         <Card
           style={{

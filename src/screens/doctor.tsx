@@ -93,10 +93,7 @@ export function DoctorVisitCard({ visit }: { visit: Visit }) {
 
 export function DoctorHome() {
   const { state, cloud, notify } = useClinic();
-  const hasAssignedWorkspace =
-    !cloud ||
-    state.session?.role === "Doctor" ||
-    cloud.spaces.some((s) => s.role === "Doctor");
+  const hasAssignedWorkspace = !cloud || state.session?.role === "Doctor";
   const visits = hasAssignedWorkspace ? visibleVisits(state) : [];
   const today = visits.filter(
     (v) => v.date === dayKey() && v.status !== "Cancelled",
