@@ -605,20 +605,45 @@ async function route(
       };
     }
     let stateForTransition = snapshot.state;
+    let actionForTransition = action;
     if (
       action.type === "book" &&
       !providers.some((p) => p.id === action.visit.providerId)
     ) {
       const verifiedProvider = await env.DB.prepare(
-        "SELECT 1 FROM verification_applications WHERE user_id=? AND status='Approved' AND valid_until > ? AND kind IN ('Doctor','Nurse')",
+        "SELECT details, kind FROM verification_applications WHERE user_id=? AND status='Approved' AND valid_until > ? AND kind IN ('Doctor','Nurse')",
       )
         .bind(action.visit.providerId, verificationDay())
-        .first();
+        .first<{ details?: string; kind?: string }>();
       if (verifiedProvider) {
         if (!snapshot.state.approved.includes(action.visit.providerId)) {
           stateForTransition = {
             ...snapshot.state,
             approved: [...snapshot.state.approved, action.visit.providerId],
+          };
+        }
+        let verifiedName: string | undefined;
+        try {
+          const parsed = JSON.parse(verifiedProvider.details || "{}") as {
+            fullName?: unknown;
+          };
+          if (typeof parsed.fullName === "string" && parsed.fullName.trim()) {
+            const rawName = parsed.fullName.trim();
+            verifiedName =
+              verifiedProvider.kind === "Doctor" && !/^Dr\.?\s/i.test(rawName)
+                ? `Dr. ${rawName}`
+                : rawName;
+          }
+        } catch {
+          verifiedName = undefined;
+        }
+        if (verifiedName || action.visit.providerName) {
+          actionForTransition = {
+            ...action,
+            visit: {
+              ...action.visit,
+              providerName: verifiedName || action.visit.providerName,
+            },
           };
         }
       } else if (snapshot.state.approved.includes(action.visit.providerId)) {
@@ -638,7 +663,7 @@ async function route(
     }
     let next: ClinicState;
     try {
-      next = cloudTransition(stateForTransition, action, operationId);
+      next = cloudTransition(stateForTransition, actionForTransition, operationId);
     } catch (error) {
       throw new HttpError(
         400,

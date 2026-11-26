@@ -980,6 +980,7 @@ export function BookingScreen() {
                     type: "book",
                     visit: {
                       providerId: p.id,
+                      providerName: p.name,
                       date,
                       time,
                       service,

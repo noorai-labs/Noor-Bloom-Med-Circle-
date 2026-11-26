@@ -13,6 +13,7 @@ export type Visit = {
   frequency: string;
   address: string;
   reason: string;
+  providerName?: string;
   status: VisitStatus;
   checklist: boolean[];
   notes: string;
@@ -109,7 +110,13 @@ export const times = [
   "04:30 PM",
 ];
 export const providerFor = (visit: Visit) =>
-  providers.find((p) => p.id === visit.providerId)!;
+  providers.find((p) => p.id === visit.providerId) || {
+    ...doctors[0],
+    id: visit.providerId,
+    name: visit.providerName?.trim() || "Care professional",
+    specialty: "Verified professional",
+    initials: "CP",
+  };
 export const nursing = (providerId: string) => providerId.startsWith("n");
 export const terminal = (v: Visit) =>
   ["Completed", "Cancelled"].includes(v.status);
