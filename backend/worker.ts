@@ -3,6 +3,7 @@ import { verifyToken } from "@clerk/backend";
 import {
   canRead,
   createState,
+  providers,
   type Action,
   type ClinicState,
   type Role,
@@ -600,7 +601,10 @@ async function route(
       };
     }
     let stateForTransition = snapshot.state;
-    if (action.type === "book") {
+    if (
+      action.type === "book" &&
+      !providers.some((p) => p.id === action.visit.providerId)
+    ) {
       const verifiedProvider = await env.DB.prepare(
         "SELECT 1 FROM verification_applications WHERE user_id=? AND status='Approved' AND valid_until > ? AND kind IN ('Doctor','Nurse')",
       )
