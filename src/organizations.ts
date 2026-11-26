@@ -276,7 +276,7 @@ export async function clearSelectedOrganization(): Promise<void> {
   await AsyncStorage.removeItem(SELECTED_ORG_KEY);
 }
 
-const isDevMockAllowed =
+export const isDevMockAllowed =
   typeof __DEV__ !== "undefined"
     ? __DEV__
     : process.env.NODE_ENV !== "production";

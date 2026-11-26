@@ -43,7 +43,7 @@ const WEEKDAY_KEYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 function parseSlotTo24Hour(timeStr: string): string | null {
   const trimmed = timeStr.trim();
   if (TIME_RE.test(trimmed)) return trimmed;
-  const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(trimmed);
+  const match = /^(\d{1,2}):([0-5]\d)\s*(AM|PM)$/i.exec(trimmed);
   if (!match) return null;
   let hours = Number(match[1]);
   const minutes = match[2];

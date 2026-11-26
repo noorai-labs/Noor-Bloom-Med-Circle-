@@ -9,7 +9,7 @@ import {
   type DisplayProvider,
 } from "../provider-display";
 import { DoctorAppointments } from "./doctor";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useClinic } from "../store";
@@ -730,7 +730,7 @@ export function DateTime({
 }
 export function BookingScreen() {
   const params = useLocalSearchParams<{ providerId: string; date?: string }>();
-  const { state, dispatch, notify } = useClinic();
+  const { state, cloud, dispatch, notify } = useClinic();
   const p = findProvider(params.providerId);
   const isNurse = p?.kind === "Nurse" || nursing(params.providerId || "");
   const hasPendingWithProvider = state.visits.some(
@@ -738,6 +738,12 @@ export function BookingScreen() {
   );
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [confirmedVisit, setConfirmedVisit] = useState<
+    (typeof state.visits)[number] | null
+  >(null);
+  const preSubmitIdsRef = useRef<Set<string>>(new Set());
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [service, setService] = useState(
     isNurse ? "Home nursing" : "Home Visit",
@@ -749,6 +755,49 @@ export function BookingScreen() {
   const [time, setTime] = useState("");
   const [address, setAddress] = useState(state.profile.address);
   const [reason, setReason] = useState("");
+
+  useEffect(() => {
+    if (!awaitingConfirm || !p) return;
+    if (cloud?.status === "Save failed") {
+      const msg =
+        cloud.error ||
+        "Could not send care request. Please review your date and time.";
+      const timer = setTimeout(() => {
+        setAwaitingConfirm(false);
+        setSubmitting(false);
+        setSubmitError(msg);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+    if (!cloud || cloud.status === "Synced") {
+      const matched =
+        state.visits.find(
+          (v) =>
+            !preSubmitIdsRef.current.has(v.id) &&
+            v.providerId === p.id &&
+            v.date === date &&
+            v.time === time &&
+            !terminal(v),
+        ) ||
+        state.visits.find(
+          (v) =>
+            v.providerId === p.id &&
+            v.date === date &&
+            v.time === time &&
+            !terminal(v),
+        );
+      if (matched) {
+        const timer = setTimeout(() => {
+          setConfirmedVisit(matched);
+          setAwaitingConfirm(false);
+          setSubmitting(false);
+          setSubmitError("");
+          setStep(3);
+        }, 0);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [awaitingConfirm, cloud, date, p, state.visits, time]);
   if (!p)
     return (
       <Screen title="Book care" back>
@@ -760,8 +809,8 @@ export function BookingScreen() {
         />
       </Screen>
     );
-  if (step === 3) {
-    const visit = state.visits.at(-1)!;
+  if (step === 3 && confirmedVisit) {
+    const visit = confirmedVisit;
     return (
       <Screen title="A little peace of mind" allowed={["Patient", "Family"]}>
         <Card style={{ alignItems: "center", paddingVertical: 35 }}>
@@ -967,33 +1016,51 @@ export function BookingScreen() {
           <Body muted style={{ fontSize: 12 }}>
             For emergencies, use SOS or call 112.
           </Body>
+          {submitError ? (
+            <View
+              style={{
+                backgroundColor: "#FEF2F2",
+                borderColor: "#FECACA",
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 12,
+              }}
+            >
+              <Body style={{ color: "#991B1B", fontSize: 13 }}>
+                {submitError}
+              </Body>
+            </View>
+          ) : null}
           <Button
             title="Confirm care request"
             loading={submitting}
             disabled={submitting}
             onPress={() => {
               if (submitting) return;
+              setSubmitError("");
               setSubmitting(true);
-              try {
-                if (
-                  dispatch({
-                    type: "book",
-                    visit: {
-                      providerId: p.id,
-                      providerName: p.name,
-                      date,
-                      time,
-                      service,
-                      frequency,
-                      address,
-                      reason,
-                    },
-                  })
-                ) {
-                  setStep(3);
-                }
-              } finally {
+              preSubmitIdsRef.current = new Set(state.visits.map((v) => v.id));
+              const ok = dispatch({
+                type: "book",
+                visit: {
+                  providerId: p.id,
+                  providerName: p.name,
+                  date,
+                  time,
+                  service,
+                  frequency,
+                  address,
+                  reason,
+                },
+              });
+              if (ok) {
+                setAwaitingConfirm(true);
+              } else {
                 setSubmitting(false);
+                setSubmitError(
+                  cloud?.error ||
+                    "Could not submit care request. Please review your details and try again.",
+                );
               }
             }}
           />

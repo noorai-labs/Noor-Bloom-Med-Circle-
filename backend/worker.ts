@@ -660,6 +660,21 @@ async function route(
         action.visit.date,
         action.visit.time,
       );
+    } else if (action.type === "reschedule") {
+      const targetVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
+      if (
+        targetVisit &&
+        !providers.some((p) => p.id === targetVisit.providerId)
+      ) {
+        await checkDoctorAvailabilityForSlot(
+          env,
+          targetVisit.providerId,
+          action.date,
+          action.time,
+        );
+      }
     }
     let next: ClinicState;
     try {

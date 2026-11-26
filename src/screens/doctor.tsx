@@ -27,6 +27,7 @@ import {
   fetchWorkspaces,
   getSelectedOrganization,
   getWorkspaceJoinRequests,
+  isDevMockAllowed,
   submitWorkspaceJoinRequest,
   withdrawWorkspaceJoinRequest,
   type OrganizationWorkspace,
@@ -290,7 +291,9 @@ export function DoctorHome() {
             <Body style={{ fontSize: 13 }}>
               {hasAnyDoctorSpace
                 ? "Switch to an assigned Doctor care space in Account to view patients and consultations."
-                : "No patient workspace is assigned yet. Find an organization workspace below and request to join."}
+                : isDevMockAllowed
+                  ? "No patient workspace is assigned yet. Find an organization workspace below and request to join."
+                  : "No patient workspace is assigned yet. Workspace search is not available in this build yet."}
             </Body>
           </Card>
         )}
