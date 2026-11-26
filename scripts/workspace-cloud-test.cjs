@@ -263,6 +263,167 @@ module.exports = async ({ db, request }) => {
     "Approved workspace must appear in doctor's /v1/spaces",
   );
 
+  // 8. Day 4 End-to-End: First-time doctor onboarding -> approval -> Doctor Home -> patient search -> consultation request
+  const fullFlowDoc = "e2e_full_doc_" + randomUUID().slice(0, 8);
+  const fullFlowPatient = "e2e_full_pat_" + randomUUID().slice(0, 8);
+  const fullFlowReviewer = "e2e_full_rev_" + randomUUID().slice(0, 8);
+
+  // First-time doctor searches organization
+  const orgRes = await request(fullFlowDoc, "/v1/organizations?search=fortis");
+  assert.equal(orgRes.status, 200);
+  assert.equal(orgRes.data.organizations[0].id, "org_fortis");
+
+  // Upload & submit verification documents
+  const pdfBody = "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF";
+  const docUpload = await request(
+    fullFlowDoc,
+    "/v1/verification/documents?consent=1&name=license.pdf",
+    "POST",
+    pdfBody,
+    "application/pdf",
+  );
+  assert.equal(docUpload.status, 200);
+
+  const docSubmit = await request(
+    fullFlowDoc,
+    "/v1/verification/submit",
+    "POST",
+    {
+      kind: "Doctor",
+      revision: 0,
+      details: {
+        fullName: "Dr. FullFlow Physician",
+        country: "India",
+        authority: "National Medical Commission",
+        registrationNumber: "NMC-FULL-2026",
+        qualification: "MBBS, MD - Pediatrics",
+        consent: true,
+        organizationId: "org_fortis",
+        organizationName: "Fortis Care Center",
+        specialty: "Pediatrics",
+        languages: ["English", "Telugu"],
+        modes: ["video", "in-person"],
+      },
+      documents: [docUpload.data.id],
+    },
+  );
+  assert.equal(docSubmit.status, 200);
+
+  // While pending review: excluded from provider discovery and blocked from workspace browsing
+  const beforeApprovalList = await request(
+    fullFlowPatient,
+    "/v1/providers?specialty=Pediatrics",
+  );
+  assert.ok(
+    !beforeApprovalList.data.providers.some((p) => p.id === fullFlowDoc),
+    "Pending doctor must not appear in patient search",
+  );
+  assert.equal((await request(fullFlowDoc, "/v1/workspaces")).status, 403);
+
+  // Negative booking test: Patient cannot book an unapproved doctor
+  const patInit = (await request(fullFlowPatient, "/v1/state")).data;
+  const futureVisitDate = new Date(Date.now() + 3 * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  const unapprovedBook = await request(
+    fullFlowPatient,
+    "/v1/actions?space=" + patInit.spaceId,
+    "POST",
+    {
+      revision: patInit.revision,
+      operationId: randomUUID(),
+      action: {
+        type: "book",
+        visit: {
+          providerId: fullFlowDoc,
+          date: futureVisitDate,
+          time: "10:00 AM",
+          service: "Online Consultation",
+          frequency: "One visit",
+          address: "",
+          reason: "Pediatric checkup",
+        },
+      },
+    },
+  );
+  assert.equal(unapprovedBook.status, 400);
+
+  // Reviewer approves the doctor
+  await db
+    .prepare(
+      "INSERT OR REPLACE INTO verification_reviewers(user_id,active) VALUES (?,1)",
+    )
+    .bind(fullFlowReviewer)
+    .run();
+  const approveDoc = await request(
+    fullFlowReviewer,
+    "/v1/verification/review",
+    "POST",
+    {
+      id: docSubmit.data.id,
+      revision: 1,
+      status: "Approved",
+      reason: "Medical council registration verified",
+      identityReference: "ID-FULL-OK",
+      registrationReference: "NMC-FULL-OK",
+      validUntil: futureDate,
+    },
+  );
+  assert.equal(approveDoc.status, 200);
+
+  // Doctor opens Doctor Home without any assigned visit or workspace
+  const fullDocSpaces = await request(fullFlowDoc, "/v1/spaces");
+  assert.equal(fullDocSpaces.status, 200);
+  const fullDocHomeSpace = fullDocSpaces.data.find((s) => s.role === "Doctor");
+  assert.ok(fullDocHomeSpace);
+  const fullDocHomeState = await request(
+    fullFlowDoc,
+    "/v1/state?space=" + fullDocHomeSpace.id,
+  );
+  assert.equal(fullDocHomeState.status, 200);
+  assert.equal(fullDocHomeState.data.state.session.role, "Doctor");
+
+  // Patient searches for the verified doctor profile using filters
+  const patSearch = await request(
+    fullFlowPatient,
+    "/v1/providers?specialty=Pediatrics&language=Telugu&mode=video",
+  );
+  assert.equal(patSearch.status, 200);
+  const discoveredDoc = patSearch.data.providers.find(
+    (p) => p.id === fullFlowDoc,
+  );
+  assert.ok(
+    discoveredDoc,
+    "Patient search must find the newly verified doctor profile",
+  );
+
+  // Patient sends a consultation request to the discovered verified doctor
+  const bookRes = await request(
+    fullFlowPatient,
+    "/v1/actions?space=" + patInit.spaceId,
+    "POST",
+    {
+      revision: patInit.revision,
+      operationId: randomUUID(),
+      action: {
+        type: "book",
+        visit: {
+          providerId: discoveredDoc.id,
+          date: futureVisitDate,
+          time: "10:00 AM",
+          service: "Online Consultation",
+          frequency: "One visit",
+          address: "",
+          reason: "Child fever consultation",
+        },
+      },
+    },
+  );
+  assert.equal(bookRes.status, 200, JSON.stringify(bookRes.data));
+  assert.equal(bookRes.data.state.visits.length, 1);
+  assert.equal(bookRes.data.state.visits[0].providerId, fullFlowDoc);
+  assert.equal(bookRes.data.state.visits[0].status, "Requested");
+
   console.log(
     "Passed: organization workspace browsing, org-scoped isolation, join requests, zero access while pending/rejected, and admin review approval.",
   );

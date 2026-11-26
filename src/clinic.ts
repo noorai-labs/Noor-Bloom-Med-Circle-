@@ -109,7 +109,18 @@ export const times = [
   "04:30 PM",
 ];
 export const providerFor = (visit: Visit) =>
-  providers.find((p) => p.id === visit.providerId)!;
+  providers.find((p) => p.id === visit.providerId) || {
+    id: visit.providerId,
+    name: "Assigned care professional",
+    specialty: "Care team",
+    experience: 0,
+    initials: "CP",
+    color: "#E1ECE2",
+    rating: "",
+    fee: 0,
+    about: "",
+    skills: "",
+  };
 export const nursing = (providerId: string) => providerId.startsWith("n");
 export const terminal = (v: Visit) =>
   ["Completed", "Cancelled"].includes(v.status);
