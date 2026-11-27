@@ -225,9 +225,9 @@ export async function workspaceRoute(
       }
       // Allow re-requesting after Rejection
       const reopened = await env.DB.prepare(
-        "UPDATE workspace_join_requests SET status='Pending', reason='', reviewed_by='', updated_at=CURRENT_TIMESTAMP, attempt=attempt+1 WHERE id=? AND status='Rejected' AND attempt=?",
+        "UPDATE workspace_join_requests SET status='Pending', organization_id=?, reason='', reviewed_by='', updated_at=CURRENT_TIMESTAMP, attempt=attempt+1 WHERE id=? AND status='Rejected' AND attempt=?",
       )
-        .bind(existingReq.id, existingReq.attempt)
+        .bind(organizationId, existingReq.id, existingReq.attempt)
         .run();
       if (!reopened.meta.changes)
         throw new WorkspaceError(
@@ -420,8 +420,21 @@ export async function workspaceRoute(
     // Each subsequent statement runs only if its predecessor wrote a row.
     const statements: D1PreparedStatement[] = [
       env.DB.prepare(
-        "UPDATE workspace_join_requests SET status=?, reason=?, reviewed_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='Pending' AND attempt=?",
-      ).bind(decision, reason, user, requestId, attempt),
+        `UPDATE workspace_join_requests
+         SET status=?, reason=?, reviewed_by=?, updated_at=CURRENT_TIMESTAMP
+         WHERE id=? AND status='Pending' AND attempt=?
+           AND EXISTS (
+             SELECT 1 FROM organization_admins a
+             WHERE a.organization_id=workspace_join_requests.organization_id
+               AND a.user_id=? AND a.active=1
+           )
+           AND (? <> 'Approved' OR NOT EXISTS (
+             SELECT 1 FROM memberships m
+             WHERE m.user_id=workspace_join_requests.user_id
+               AND m.space_id=workspace_join_requests.space_id
+               AND (m.role<>'Doctor' OR m.provider_id<>m.user_id)
+           ))`,
+      ).bind(decision, reason, user, requestId, attempt, user, decision),
       env.DB.prepare(
         "INSERT INTO security_audit(actor_id, space_id, action, target_id) SELECT ?, ?, ?, ? WHERE changes()>0",
       ).bind(
@@ -446,7 +459,7 @@ export async function workspaceRoute(
     if (!res[0].meta.changes) {
       throw new WorkspaceError(
         409,
-        "This join request was already reviewed concurrently.",
+        "The request could not be reviewed. Refresh and check its status, your admin access, and the applicant’s workspace membership.",
       );
     }
 

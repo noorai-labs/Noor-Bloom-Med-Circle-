@@ -15,10 +15,27 @@ The Expo app has two explicit modes. `demo` preserves the existing local walkthr
 
 Each Google account automatically gets an empty patient care space. Its ID is `personal_<Clerk user ID>`. A trusted operator grants staff/family membership through D1. The client has no endpoint for granting itself access:
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:b3a6e977e3f85bd20dde52daa98b4cc8afe8c08fd053ad031a9b3b450fedc7c2 -->
+
 ```sql
 INSERT INTO memberships (user_id, space_id, role, provider_id)
-VALUES ('user_DOCTOR_ID', 'personal_user_PATIENT_ID', 'Doctor', '1');
+VALUES ('user_DOCTOR_ID', 'personal_user_PATIENT_ID', 'Doctor', 'user_DOCTOR_ID');
 ```
+
+Use the Clerk user ID of a verified Doctor. For each care space you want to list as an organization workspace, use an organization ID from the seeded `organizations` directory (`SELECT id, name FROM organizations;`). After applying migrations `0006_organizations.sql` and `0007_workspace_requests.sql`, link the space with a display name and grant the intended Clerk user active admin access for that organization:
+
+```sql
+INSERT INTO workspace_organizations (space_id, organization_id, name)
+VALUES ('personal_user_PATIENT_ID', 'org_bloom', 'Cardiology Clinic');
+
+INSERT INTO organization_admins (user_id, organization_id, active)
+VALUES ('user_ORG_ADMIN_ID', 'org_bloom', 1)
+ON CONFLICT (user_id, organization_id) DO UPDATE SET active = 1;
+```
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 <!-- coderabbit-ai-generated:v1 -->
 

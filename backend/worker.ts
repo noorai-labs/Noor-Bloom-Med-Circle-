@@ -239,6 +239,7 @@ function visibleSnapshot(snapshot: Awaited<ReturnType<typeof access>>) {
     };
   }
   if (recordsAccess) return { ...result, recordsAccess: true };
+  const assignedVisitIds = new Set(result.state.visits.map((v) => v.id));
   return {
     ...result,
     recordsAccess: false,
@@ -246,6 +247,13 @@ function visibleSnapshot(snapshot: Awaited<ReturnType<typeof access>>) {
       ...result.state,
       records: [],
       consultations: [],
+      ...(session?.role === "Doctor"
+        ? {
+            savedConsultationVisitIds: result.state.consultations
+              .filter((note) => assignedVisitIds.has(note.visitId))
+              .map((note) => note.visitId),
+          }
+        : {}),
       medicines: [],
       activities: [],
       visits: result.state.visits.map((v) => ({ ...v, notes: "", reason: "" })),

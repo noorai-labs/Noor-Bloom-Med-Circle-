@@ -71,11 +71,19 @@ export type ClinicState = {
   medicines: Medicine[];
   records: RecordItem[];
   consultations: Consultation[];
+  // Snapshot metadata for Doctors who cannot read consultation contents.
+  savedConsultationVisitIds?: string[];
   activities: Activity[];
   approved: string[];
   issues: { id: string; subject: string; resolved: boolean }[];
   sos: boolean;
 };
+export function hasSavedConsultation(s: ClinicState, visitId: string) {
+  return (
+    s.consultations.some((note) => note.visitId === visitId) ||
+    s.savedConsultationVisitIds?.includes(visitId) === true
+  );
+}
 export const providers = [...doctors, ...nurses];
 let sequence = 0;
 export const id = (prefix: string) =>
@@ -448,7 +456,7 @@ export function transition(
       if (
         a.status === "Completed" &&
         !nursingVisit(v) &&
-        !s.consultations.some((n) => n.visitId === v.id)
+        !hasSavedConsultation(s, v.id)
       )
         throw new Error("Save consultation notes before completing the visit.");
       return activity(
@@ -518,7 +526,7 @@ export function transition(
       requireAccess(s, ["Doctor"]);
       if (v.status !== "In Progress" || !a.text.trim())
         throw new Error("Start this visit and add consultation notes.");
-      if (s.consultations.some((n) => n.visitId === v.id))
+      if (hasSavedConsultation(s, v.id))
         throw new Error(
           "Consultation notes have already been saved for this visit.",
         );

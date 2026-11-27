@@ -148,7 +148,16 @@ module.exports = async ({ db, request }) => {
   ]);
   const firstPage = await request(bloomDoctor, "/v1/workspaces?search=cardio");
   assert.equal(firstPage.status, 200);
-  assert.equal(firstPage.data.workspaces.length, 50);
+  assert.deepEqual(
+    firstPage.data.workspaces.map((w) => w.spaceId),
+    [
+      bloomCardioSpace,
+      ...Array.from(
+        { length: 49 },
+        (_, i) => "ws_page_" + String(i + 1).padStart(2, "0"),
+      ),
+    ],
+  );
   const secondPage = await request(
     bloomDoctor,
     "/v1/workspaces?search=cardio&cursor=" +
@@ -283,6 +292,13 @@ module.exports = async ({ db, request }) => {
     "Rejected join request must grant no access",
   );
 
+  // A rejected request can still reference the workspace's former organization.
+  await db
+    .prepare(
+      "UPDATE workspace_join_requests SET organization_id='org_apollo' WHERE id=?",
+    )
+    .bind(requestId)
+    .run();
   // Doctor re-requests after rejection, then Bloom admin approves
   const retries = await Promise.all(
     Array.from({ length: 2 }, () =>
@@ -314,9 +330,9 @@ module.exports = async ({ db, request }) => {
     bloomAdmin,
     "/v1/workspaces/admin/requests",
   );
-  const attempt = currentQueue.data.requests.find(
-    (r) => r.id === requestId,
-  ).attempt;
+  const reopened = currentQueue.data.requests.find((r) => r.id === requestId);
+  assert.equal(reopened.organizationId, "org_bloom");
+  const { attempt } = reopened;
   assert.notEqual(attempt, firstAttempt);
   const reviews = await Promise.all(
     Array.from({ length: 2 }, () =>
@@ -360,6 +376,67 @@ module.exports = async ({ db, request }) => {
     (await request(bloomDoctor, "/v1/state?space=" + bloomCardioSpace)).status,
     403,
   );
+
+  // A membership added after the join request must not be replaced or have its grant reset.
+  const pedsJoin = await request(bloomDoctor, joinPath, "POST", {
+    spaceId: bloomPedsSpace,
+  });
+  assert.equal(pedsJoin.status, 200);
+  const pedsRequestId = pedsJoin.data.request.id;
+  const decidePeds = () =>
+    request(bloomAdmin, reviewPath, "POST", {
+      requestId: pedsRequestId,
+      attempt: 1,
+      decision: "Approved",
+    });
+  await db
+    .prepare(
+      "INSERT INTO memberships(user_id,space_id,role,provider_id,records_access) VALUES (?,?,'Doctor','different_provider',1)",
+    )
+    .bind(bloomDoctor, bloomPedsSpace)
+    .run();
+  const readPedsMembership = () =>
+    db
+      .prepare(
+        "SELECT role,provider_id,records_access FROM memberships WHERE user_id=? AND space_id=?",
+      )
+      .bind(bloomDoctor, bloomPedsSpace)
+      .first();
+  assert.equal((await decidePeds()).status, 409);
+  assert.deepEqual(await readPedsMembership(), {
+    role: "Doctor",
+    provider_id: "different_provider",
+    records_access: 1,
+  });
+  assert.equal(
+    await db
+      .prepare("SELECT status FROM workspace_join_requests WHERE id=?")
+      .bind(pedsRequestId)
+      .first("status"),
+    "Pending",
+  );
+  const readPedsAuditCount = () =>
+    db
+      .prepare(
+        "SELECT count(*) AS count FROM security_audit WHERE action='workspace.join.approve' AND space_id=?",
+      )
+      .bind(bloomPedsSpace)
+      .first("count");
+  assert.equal(await readPedsAuditCount(), 0);
+
+  await db
+    .prepare(
+      "UPDATE memberships SET provider_id=? WHERE user_id=? AND space_id=?",
+    )
+    .bind(bloomDoctor, bloomDoctor, bloomPedsSpace)
+    .run();
+  assert.equal((await decidePeds()).status, 200);
+  assert.deepEqual(await readPedsMembership(), {
+    role: "Doctor",
+    provider_id: bloomDoctor,
+    records_access: 1,
+  });
+  assert.equal(await readPedsAuditCount(), 1);
 
   // 8. Day 4 End-to-End: First-time doctor onboarding -> approval -> Doctor Home -> patient search -> consultation request
   const fullFlowDoc = "n_e2e_full_doc_" + randomUUID().slice(0, 8);
@@ -564,6 +641,42 @@ module.exports = async ({ db, request }) => {
   assert.equal(accepted.status, 200, JSON.stringify(accepted.data));
   assert.equal(accepted.data.state.visits[0].status, "Confirmed");
 
+  const doctorAction = (revision, action) =>
+    request(fullFlowDoc, bookPath, "POST", {
+      revision,
+      operationId: randomUUID(),
+      action: { visitId: requested.id, ...action },
+    });
+  const started = await doctorAction(accepted.data.revision, {
+    type: "status",
+    status: "In Progress",
+  });
+  assert.equal(started.status, 200, JSON.stringify(started.data));
+  assert.deepEqual(started.data.state.savedConsultationVisitIds, []);
+  const complete = { type: "status", status: "Completed" };
+  const premature = await doctorAction(started.data.revision, complete);
+  assert.equal(premature.status, 400);
+  assert.match(premature.data.error, /Save consultation notes/);
+  const consulted = await doctorAction(started.data.revision, {
+    type: "consult",
+    text: "Private consultation notes",
+    prescription: "Private care plan",
+    followUp: "",
+  });
+  assert.equal(consulted.status, 200, JSON.stringify(consulted.data));
+  assert.deepEqual(consulted.data.state.consultations, []);
+  assert.deepEqual(consulted.data.state.savedConsultationVisitIds, [
+    requested.id,
+  ]);
+  const refreshed = await request(fullFlowDoc, doctorVisitPath);
+  assert.deepEqual(refreshed.data.state.consultations, []);
+  assert.deepEqual(refreshed.data.state.savedConsultationVisitIds, [
+    requested.id,
+  ]);
+  const completed = await doctorAction(refreshed.data.revision, complete);
+  assert.equal(completed.status, 200, JSON.stringify(completed.data));
+  assert.equal(completed.data.state.visits[0].status, "Completed");
+
   await db
     .prepare(
       "UPDATE verification_applications SET valid_until='2000-01-01' WHERE id=?",
@@ -581,7 +694,7 @@ module.exports = async ({ db, request }) => {
   );
   assert.equal((await request(fullFlowDoc, doctorVisitPath)).status, 403);
   const expiredBook = await request(fullFlowPatient, bookPath, "POST", {
-    revision: accepted.data.revision,
+    revision: completed.data.revision,
     operationId: randomUUID(),
     action: { type: "book", visit: { ...requested, time: "11:30 AM" } },
   });
