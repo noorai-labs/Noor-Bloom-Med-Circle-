@@ -145,7 +145,7 @@ async function request(
           : body,
   });
   const data = await response.json();
-  return { status: response.status, data };
+  return { status: response.status, data, headers: response.headers };
 }
 async function main() {
   const forged = await mf.dispatchFetch("http://test/v1/state", {
@@ -276,6 +276,507 @@ async function main() {
     visitId: visit.id,
     status: "Completed",
   });
+  // 1. Negative test: Rescheduling a completed visit is rejected
+  const rescheduleCompleted = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: {
+      type: "reschedule",
+      visitId: visit.id,
+      date: day,
+      time: "11:30 AM",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(rescheduleCompleted.status, 400);
+  assert.equal(
+    rescheduleCompleted.data.error,
+    "Only upcoming visits can be rescheduled.",
+  );
+
+  // 2. Negative test: Patient cannot mark a visit as Confirmed or Completed
+  const patientStatusUpdate = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: {
+      type: "status",
+      visitId: visit.id,
+      status: "Confirmed",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(patientStatusUpdate.status, 400);
+
+  // 3. Negative test: Doctor cannot modify a visit assigned to a different provider
+  await db
+    .prepare(
+      "INSERT INTO memberships (user_id,space_id,role,provider_id) VALUES (?,?,?,?)",
+    )
+    .bind("user_doctor_other", space, "Doctor", "2")
+    .run();
+  const crossDoctorUpdate = await request(
+    "user_doctor_other",
+    endpoint,
+    "POST",
+    {
+      revision,
+      action: {
+        type: "status",
+        visitId: visit.id,
+        status: "In Progress",
+      },
+      operationId: randomUUID(),
+    },
+  );
+  assert.equal(crossDoctorUpdate.status, 403);
+  assert.equal(
+    crossDoctorUpdate.data.error,
+    "An active assigned visit is required.",
+  );
+
+  // 4. Defect reproduction: Booking a second visit must NOT corrupt historical visit status
+  const date2 = new Date();
+  date2.setDate(date2.getDate() + 4);
+  const day2 = date2.toISOString().slice(0, 10);
+  state = await mutate("user_patient", {
+    type: "book",
+    visit: {
+      providerId: "2",
+      date: day2,
+      time: "11:30 AM",
+      service: "Home Visit",
+      frequency: "One visit",
+      address: "Test address",
+      reason: "Second checkup",
+    },
+  });
+  assert.equal(state.visits.length, 2);
+  assert.equal(
+    state.visits.find((v) => v.id === visit.id)?.status,
+    "Completed",
+    "Regression: historical visit was corrupted back to Requested!",
+  );
+  const secondVisit = state.visits[state.visits.length - 1];
+  assert.equal(secondVisit.status, "Requested");
+  assert.equal(state.activities[0].title, "Care request sent");
+
+  // Verify target-visit authorization: Doctor 2 is now admitted (has visit 2),
+  // but attempting an action on Doctor 1's visit must be rejected by target-visit checks.
+  const admittedState = await request(
+    "user_doctor_other",
+    "/v1/state?space=" + space,
+  );
+  assert.equal(admittedState.status, 200);
+  const crossVisitUpdate = await request(
+    "user_doctor_other",
+    endpoint,
+    "POST",
+    {
+      revision,
+      action: {
+        type: "status",
+        visitId: visit.id,
+        status: "In Progress",
+      },
+      operationId: randomUUID(),
+    },
+  );
+  assert.equal(crossVisitUpdate.status, 400);
+  assert.equal(
+    crossVisitUpdate.data.error,
+    "This visit belongs to another care professional.",
+  );
+
+  // 5. Concurrency Test: Competing bookings for the exact same slot by different patients
+  const secondPatient = await request("user_patient_b", "/v1/state");
+  assert.equal(secondPatient.status, 200);
+  const spaceB = secondPatient.data.spaceId;
+  let revisionB = secondPatient.data.revision;
+  const endpointB = "/v1/actions?space=" + spaceB;
+  const onboardB = await request("user_patient_b", endpointB, "POST", {
+    revision: revisionB,
+    action: {
+      type: "profile",
+      profile: {
+        ...secondPatient.data.state.profile,
+        name: "Patient B",
+        age: "28",
+        address: "Address B",
+      },
+      onboarding: true,
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(onboardB.status, 200);
+  revisionB = onboardB.data.revision;
+
+  const competingOpA = randomUUID();
+  const competingOpB = randomUUID();
+  const [resA, resB] = await Promise.all([
+    request("user_patient", endpoint, "POST", {
+      revision,
+      action: {
+        type: "book",
+        visit: {
+          providerId: "1",
+          date: day2,
+          time: "02:00 PM",
+          service: "Home Visit",
+          frequency: "One visit",
+          address: "Address A",
+          reason: "Consult A",
+        },
+      },
+      operationId: competingOpA,
+    }),
+    request("user_patient_b", endpointB, "POST", {
+      revision: revisionB,
+      action: {
+        type: "book",
+        visit: {
+          providerId: "1",
+          date: day2,
+          time: "02:00 PM",
+          service: "Home Visit",
+          frequency: "One visit",
+          address: "Address B",
+          reason: "Consult B",
+        },
+      },
+      operationId: competingOpB,
+    }),
+  ]);
+
+  const competingStatuses = [resA.status, resB.status].sort();
+  assert.deepEqual(
+    competingStatuses,
+    [200, 409],
+    "Exactly one competing booking must succeed and one must be rejected with 409",
+  );
+  const conflictRes = resA.status === 409 ? resA : resB;
+  const successRes = resA.status === 200 ? resA : resB;
+  assert.equal(
+    conflictRes.data.error,
+    "This slot is already booked for this care professional.",
+  );
+  if (resA.status === 200) {
+    revision = resA.data.revision;
+    state = resA.data.state;
+  } else {
+    revisionB = resB.data.revision;
+  }
+
+  // Verify only 1 active slot exists in appointment_slots
+  const bookedSlots = await db
+    .prepare(
+      "SELECT * FROM appointment_slots WHERE provider_id='1' AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')",
+    )
+    .bind(day2, "02:00 PM")
+    .all();
+  assert.equal(
+    bookedSlots.results.length,
+    1,
+    "Only one accepted booking record can exist in database",
+  );
+
+  // 6. Idempotency Test: Resending identical operationId does NOT create duplicate booking
+  const winningUser = resA.status === 200 ? "user_patient" : "user_patient_b";
+  const winningEndpoint = resA.status === 200 ? endpoint : endpointB;
+  const winningOp = resA.status === 200 ? competingOpA : competingOpB;
+  const winningRevision = resA.status === 200 ? revision : revisionB;
+
+  const replay = await request(winningUser, winningEndpoint, "POST", {
+    revision: winningRevision,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "02:00 PM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address A",
+        reason: "Consult A",
+      },
+    },
+    operationId: winningOp,
+  });
+  assert.equal(replay.status, 200, "Idempotent replay must succeed with 200");
+  assert.equal(
+    replay.headers.get("x-idempotent-replay"),
+    "true",
+    "Must indicate idempotent replay in headers",
+  );
+
+  const afterReplaySlots = await db
+    .prepare(
+      "SELECT * FROM appointment_slots WHERE provider_id='1' AND date=? AND time=?",
+    )
+    .bind(day2, "02:00 PM")
+    .all();
+  assert.equal(
+    afterReplaySlots.results.length,
+    1,
+    "Idempotent retry must not create a second booking slot",
+  );
+
+  // 6b. Regression test: A new operation ID appearing in unrelated saved text is processed normally
+  const textCollisionOp = randomUUID();
+  // Save unrelated text containing textCollisionOp in patient profile address
+  await mutate("user_patient", {
+    type: "profile",
+    profile: {
+      ...state.profile,
+      name: "Test Patient",
+      age: "30",
+      address: "Address with ref: " + textCollisionOp,
+    },
+    onboarding: true,
+  });
+  // Now request a new booking using that exact textCollisionOp
+  const bookingWithCollisionOp = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "11:30 AM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address Text Collision",
+        reason: "Consult with UUID in note text",
+      },
+    },
+    operationId: textCollisionOp,
+  });
+  assert.equal(
+    bookingWithCollisionOp.status,
+    200,
+    "Operation ID matching unrelated text must not be rejected or dropped",
+  );
+  assert.notEqual(
+    bookingWithCollisionOp.headers.get("x-idempotent-replay"),
+    "true",
+    "Request with new operation ID must not be treated as an idempotent replay",
+  );
+  revision = bookingWithCollisionOp.data.revision;
+  const collisionSlot = await db
+    .prepare(
+      "SELECT * FROM appointment_slots WHERE provider_id='1' AND date=? AND time=?",
+    )
+    .bind(day2, "11:30 AM")
+    .first();
+  assert.ok(collisionSlot, "Expected booking must be saved in appointment_slots");
+
+  // 7. Reschedule Conflict Test & Lifecycle audit attribution
+  const losingUser = resA.status === 409 ? "user_patient" : "user_patient_b";
+  const losingEndpoint = resA.status === 409 ? endpoint : endpointB;
+  let losingRev = resA.status === 409 ? revision : revisionB;
+
+  const losingBook = await request(losingUser, losingEndpoint, "POST", {
+    revision: losingRev,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "04:30 PM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address X",
+        reason: "Consult X",
+      },
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(losingBook.status, 200);
+  losingRev = losingBook.data.revision;
+  const losingVisitId =
+    losingBook.data.state.visits[losingBook.data.state.visits.length - 1].id;
+
+  // Attempting to reschedule to the already booked 02:00 PM slot must fail with 409
+  const badReschedule = await request(losingUser, losingEndpoint, "POST", {
+    revision: losingRev,
+    action: {
+      type: "reschedule",
+      visitId: losingVisitId,
+      date: day2,
+      time: "02:00 PM",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(badReschedule.status, 409);
+  assert.equal(badReschedule.data.error, "That slot is already booked.");
+
+  // Cancellation frees the slot and records audit attribution
+  const winningVisitId =
+    successRes.data.state.visits[successRes.data.state.visits.length - 1].id;
+  const cancelRes = await request(winningUser, winningEndpoint, "POST", {
+    revision: resA.status === 200 ? revision : revisionB,
+    action: {
+      type: "status",
+      visitId: winningVisitId,
+      status: "Cancelled",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(cancelRes.status, 200);
+  if (resA.status === 200) {
+    revision = cancelRes.data.revision;
+    state = cancelRes.data.state;
+  } else {
+    revisionB = cancelRes.data.revision;
+  }
+
+  // Audit attribution check
+  const auditLogs = await db
+    .prepare(
+      "SELECT * FROM security_audit WHERE actor_id=? AND action='care.status'",
+    )
+    .bind(winningUser)
+    .all();
+  assert.ok(
+    auditLogs.results.length >= 1,
+    "Audit attribution must be recorded on cancellation",
+  );
+
+  // Once freed, rescheduling to 02:00 PM now succeeds!
+  const freedReschedule = await request(losingUser, losingEndpoint, "POST", {
+    revision: losingRev,
+    action: {
+      type: "reschedule",
+      visitId: losingVisitId,
+      date: day2,
+      time: "02:00 PM",
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(freedReschedule.status, 200);
+  if (resA.status === 409) {
+    revision = freedReschedule.data.revision;
+    state = freedReschedule.data.state;
+  } else {
+    revisionB = freedReschedule.data.revision;
+  }
+
+  // 8. Negative test: Malformed booking payload returns 400 validation error
+  const malformedBooking = await request("user_patient", endpoint, "POST", {
+    revision,
+    action: { type: "book" },
+    operationId: randomUUID(),
+  });
+  assert.equal(malformedBooking.status, 400);
+  assert.equal(malformedBooking.data.error, "Invalid booking request.");
+
+  // 9. Negative test: Stale revision rejects with 409 without mutating appointment_slots
+  const slotCountBeforeStale = (
+    await db.prepare("SELECT COUNT(*) as cnt FROM appointment_slots").first()
+  ).cnt;
+  const staleBooking = await request("user_patient", endpoint, "POST", {
+    revision: revision - 1,
+    action: {
+      type: "book",
+      visit: {
+        providerId: "1",
+        date: day2,
+        time: "10:00 AM",
+        service: "Home Visit",
+        frequency: "One visit",
+        address: "Address",
+        reason: "Stale test",
+      },
+    },
+    operationId: randomUUID(),
+  });
+  assert.equal(staleBooking.status, 409);
+  const slotCountAfterStale = (
+    await db.prepare("SELECT COUNT(*) as cnt FROM appointment_slots").first()
+  ).cnt;
+  assert.equal(
+    slotCountAfterStale,
+    slotCountBeforeStale,
+    "Stale revision must not insert a reservation into appointment_slots",
+  );
+
+  // 10. Regression test: Seed two active legacy appointments for the same provider, date, and time in different care spaces
+  const legacySpace1 = "legacy_space_alpha";
+  const legacySpace2 = "legacy_space_beta";
+  const conflictDate = day2;
+  const conflictTime = "09:00 AM";
+  const legacyVisit1 = {
+    id: "visit_legacy_alpha",
+    providerId: "1",
+    date: conflictDate,
+    time: conflictTime,
+    service: "Home Visit",
+    frequency: "One visit",
+    address: "Alpha St",
+    reason: "Routine checkup",
+    status: "Confirmed",
+    checklist: [],
+    notes: "Legacy booking alpha",
+  };
+  const legacyVisit2 = {
+    id: "visit_legacy_beta",
+    providerId: "1",
+    date: conflictDate,
+    time: conflictTime,
+    service: "Home Visit",
+    frequency: "One visit",
+    address: "Beta St",
+    reason: "Follow-up visit",
+    status: "Requested",
+    checklist: [],
+    notes: "Legacy booking beta",
+  };
+
+  await db
+    .prepare("INSERT INTO care_spaces (id, state, revision) VALUES (?, ?, 0)")
+    .bind(legacySpace1, JSON.stringify({ ...state, visits: [legacyVisit1] }))
+    .run();
+  await db
+    .prepare("INSERT INTO care_spaces (id, state, revision) VALUES (?, ?, 0)")
+    .bind(legacySpace2, JSON.stringify({ ...state, visits: [legacyVisit2] }))
+    .run();
+
+  // Run the rollout reconciliation path
+  const { reconcileAppointments } = require("./reconcile-appointments.cjs");
+  const reconReport = await reconcileAppointments(db);
+
+  assert.ok(
+    reconReport.duplicates >= 1,
+    "Reconciliation must report detected legacy overlap conflicts",
+  );
+  const conflictDetail = reconReport.details.find(
+    (d) =>
+      d.type === "legacy_overlap" &&
+      d.providerId === "1" &&
+      d.date === conflictDate &&
+      d.time === conflictTime,
+  );
+  assert.ok(
+    conflictDetail,
+    "Reconciliation report must include the specific overlapping slot",
+  );
+  assert.equal(
+    conflictDetail.primarySpace,
+    legacySpace1,
+    "Report must identify primary care space",
+  );
+  assert.equal(
+    conflictDetail.primaryVisit,
+    "visit_legacy_alpha",
+    "Report must identify primary visit ID",
+  );
+  assert.equal(
+    conflictDetail.overlappingSpace,
+    legacySpace2,
+    "Report must identify conflicting care space",
+  );
+  assert.equal(
+    conflictDetail.overlappingVisit,
+    "visit_legacy_beta",
+    "Report must identify conflicting visit ID",
+  );
   await mutate("user_patient", {
     type: "dose",
     medicineId: state.medicines[0].id,
@@ -741,13 +1242,13 @@ async function main() {
     200,
   );
   const timedDevice = { ...device, id: randomUUID(), timezone: "UTC" };
+  const sentBeforeSchedule = pushes.length;
   await request("user_patient", devicePath, "POST", timedDevice);
   await db
     .prepare("UPDATE reminder_devices SET active_since=? WHERE id=?")
     .bind(Date.now() - 180000, timedDevice.id)
     .run();
   await request("user_patient", devicePath, "POST", timedDevice);
-  const sentBeforeSchedule = pushes.length;
   await until(() => pushes.length === sentBeforeSchedule + 1);
   assert.equal(pushes.at(-1).data.medicineId, med.id);
   assert.ok(!pushes.at(-1).body.includes(med.name));
