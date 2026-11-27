@@ -15,8 +15,33 @@ const clean = (value: unknown, max = 200) =>
   typeof value === "string" ? value.trim().slice(0, max) : "";
 
 async function json(request: Request) {
-  const raw = await request.text();
-  if (raw.length > 20000) throw new WorkspaceError(413, "Request is too large.");
+  let raw = "";
+  const reader = request.body?.getReader();
+  if (reader) {
+    const decoder = new TextDecoder();
+    const append = (chunk: string) => {
+      if (raw.length + chunk.length > 20000) {
+        void reader.cancel().catch(() => {});
+        throw new WorkspaceError(413, "Request is too large.");
+      }
+      raw += chunk;
+    };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (let offset = 0; offset < value.length; offset += 4096)
+          append(
+            decoder.decode(value.subarray(offset, offset + 4096), {
+              stream: true,
+            }),
+          );
+      }
+      append(decoder.decode());
+    } finally {
+      reader.releaseLock();
+    }
+  }
   try {
     const value = JSON.parse(raw);
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -96,7 +121,25 @@ export async function workspaceRoute(
       query += " AND LOWER(wo.name) LIKE ?";
       bindings.push("%" + search + "%");
     }
-    query += " ORDER BY wo.name ASC, wo.space_id ASC LIMIT 50";
+    const cursor = url.searchParams.get("cursor");
+    if (cursor !== null) {
+      let position: unknown;
+      try {
+        position = JSON.parse(cursor);
+      } catch {
+        throw new WorkspaceError(400, "Invalid workspace cursor.");
+      }
+      if (
+        !Array.isArray(position) ||
+        position.length !== 2 ||
+        position.some((value) => typeof value !== "string")
+      ) {
+        throw new WorkspaceError(400, "Invalid workspace cursor.");
+      }
+      query += " AND (wo.name, wo.space_id) > (?, ?)";
+      bindings.push(...position);
+    }
+    query += " ORDER BY wo.name ASC, wo.space_id ASC LIMIT 51";
 
     const rows = await env.DB.prepare(query)
       .bind(...bindings)
@@ -108,8 +151,14 @@ export async function workspaceRoute(
         requestStatus: string | null;
       }>();
 
+    const page = rows.results.slice(0, 50);
+    const last = page[page.length - 1];
     return Response.json({
-      workspaces: rows.results.map((r) => ({
+      nextCursor:
+        rows.results.length > 50
+          ? JSON.stringify([last.name, last.spaceId])
+          : null,
+      workspaces: page.map((r) => ({
         spaceId: r.spaceId,
         name: r.name || "Clinic Workspace",
         organizationId: r.organizationId,
@@ -156,10 +205,10 @@ export async function workspaceRoute(
     }
 
     const existingReq = await env.DB.prepare(
-      "SELECT id, status FROM workspace_join_requests WHERE user_id=? AND space_id=?",
+      "SELECT id, status, attempt FROM workspace_join_requests WHERE user_id=? AND space_id=?",
     )
       .bind(user, spaceId)
-      .first<{ id: string; status: string }>();
+      .first<{ id: string; status: string; attempt: number }>();
 
     if (existingReq) {
       if (existingReq.status === "Pending") {
@@ -175,11 +224,16 @@ export async function workspaceRoute(
         );
       }
       // Allow re-requesting after Rejection
-      await env.DB.prepare(
-        "UPDATE workspace_join_requests SET status='Pending', reason='', reviewed_by='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='Rejected'",
+      const reopened = await env.DB.prepare(
+        "UPDATE workspace_join_requests SET status='Pending', reason='', reviewed_by='', updated_at=CURRENT_TIMESTAMP, attempt=attempt+1 WHERE id=? AND status='Rejected' AND attempt=?",
       )
-        .bind(existingReq.id)
+        .bind(existingReq.id, existingReq.attempt)
         .run();
+      if (!reopened.meta.changes)
+        throw new WorkspaceError(
+          409,
+          "The join request changed. Refresh and try again.",
+        );
       return Response.json({
         ok: true,
         request: {
@@ -192,11 +246,28 @@ export async function workspaceRoute(
     }
 
     const requestId = crypto.randomUUID();
-    await env.DB.prepare(
-      "INSERT INTO workspace_join_requests (id, user_id, space_id, organization_id, status) VALUES (?, ?, ?, ?, 'Pending')",
-    )
-      .bind(requestId, user, spaceId, organizationId)
-      .run();
+    try {
+      await env.DB.prepare(
+        "INSERT INTO workspace_join_requests (id, user_id, space_id, organization_id, status) VALUES (?, ?, ?, ?, 'Pending')",
+      )
+        .bind(requestId, user, spaceId, organizationId)
+        .run();
+    } catch (error) {
+      const constraint =
+        "UNIQUE constraint failed: workspace_join_requests.user_id, workspace_join_requests.space_id";
+      if (
+        error instanceof Error &&
+        (error.message.includes(constraint) ||
+          (error.cause instanceof Error &&
+            error.cause.message.includes(constraint)))
+      ) {
+        throw new WorkspaceError(
+          409,
+          "A join request for this workspace already exists.",
+        );
+      }
+      throw error;
+    }
 
     return Response.json({
       ok: true,
@@ -268,6 +339,7 @@ export async function workspaceRoute(
         wo.name AS workspaceName,
         r.organization_id AS organizationId,
         r.status,
+        r.attempt,
         r.reason,
         r.created_at AS createdAt,
         r.updated_at AS updatedAt
@@ -289,6 +361,7 @@ export async function workspaceRoute(
     const requestId = clean(input.requestId, 100);
     const decision = clean(input.decision, 20);
     const reason = clean(input.reason, 500);
+    const attempt = input.attempt;
 
     if (!requestId || !["Approved", "Rejected"].includes(decision)) {
       throw new WorkspaceError(
@@ -298,7 +371,7 @@ export async function workspaceRoute(
     }
 
     const joinReq = await env.DB.prepare(
-      "SELECT id, user_id, space_id, organization_id, status FROM workspace_join_requests WHERE id=?",
+      "SELECT id, user_id, space_id, organization_id, status, attempt FROM workspace_join_requests WHERE id=?",
     )
       .bind(requestId)
       .first<{
@@ -307,6 +380,7 @@ export async function workspaceRoute(
         space_id: string;
         organization_id: string;
         status: string;
+        attempt: number;
       }>();
 
     if (!joinReq) {
@@ -331,12 +405,25 @@ export async function workspaceRoute(
       );
     }
 
+    if (
+      typeof attempt !== "number" ||
+      !Number.isSafeInteger(attempt) ||
+      attempt < 1
+    )
+      throw new WorkspaceError(400, "Provide a valid join request attempt.");
+    if (joinReq.attempt !== attempt)
+      throw new WorkspaceError(
+        409,
+        "This join request has been reopened. Refresh and review the current attempt.",
+      );
+
+    // Each subsequent statement runs only if its predecessor wrote a row.
     const statements: D1PreparedStatement[] = [
       env.DB.prepare(
-        "UPDATE workspace_join_requests SET status=?, reason=?, reviewed_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='Pending'",
-      ).bind(decision, reason, user, requestId),
+        "UPDATE workspace_join_requests SET status=?, reason=?, reviewed_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='Pending' AND attempt=?",
+      ).bind(decision, reason, user, requestId, attempt),
       env.DB.prepare(
-        "INSERT INTO security_audit(actor_id, space_id, action, target_id) VALUES (?, ?, ?, ?)",
+        "INSERT INTO security_audit(actor_id, space_id, action, target_id) SELECT ?, ?, ?, ? WHERE changes()>0",
       ).bind(
         user,
         joinReq.space_id,
@@ -350,7 +437,7 @@ export async function workspaceRoute(
     if (decision === "Approved") {
       statements.push(
         env.DB.prepare(
-          "INSERT OR IGNORE INTO memberships(user_id, space_id, role, provider_id, records_access) VALUES (?, ?, 'Doctor', ?, 0)",
+          "INSERT INTO memberships(user_id, space_id, role, provider_id, records_access) SELECT ?, ?, 'Doctor', ?, 0 WHERE changes()>0 ON CONFLICT(user_id,space_id) DO NOTHING",
         ).bind(joinReq.user_id, joinReq.space_id, joinReq.user_id),
       );
     }

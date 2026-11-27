@@ -9,6 +9,7 @@ import {
   formatDate,
   nextDays,
   nursing,
+  nursingVisit,
   terminal,
   times,
   visibleVisits,
@@ -964,7 +965,7 @@ export function VisitScreen() {
           )}
         </Card>
       )}
-      {staff && v.status === "In Progress" && !nursing(p.id) && (
+      {staff && v.status === "In Progress" && !nursingVisit(v) && (
         <Button
           title="Complete consultation"
           disabled={!consultation}

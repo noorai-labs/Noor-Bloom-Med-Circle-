@@ -133,16 +133,70 @@ module.exports = async ({ db, request }) => {
   assert.equal(searchRes.data.workspaces[0].member, false);
   assert.equal(searchRes.data.workspaces[0].requestStatus, null);
 
-  // 3. Doctor cannot request to join a workspace in another organization
-  const crossOrgJoin = await request(bloomDoctor, "/v1/workspaces/join", "POST", {
-    spaceId: apolloHeartSpace,
+  // Identical names spanning two pages must use space ID as a tiebreaker.
+  await db.batch([
+    db
+      .prepare(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 53)
+      INSERT INTO care_spaces(id,state) SELECT printf('ws_page_%02d',i), ? FROM n`,
+      )
+      .bind(privateCareState),
+    db.prepare(`INSERT INTO workspace_organizations(space_id,organization_id,name)
+      SELECT id, CASE WHEN id='ws_page_53' THEN 'org_apollo' ELSE 'org_bloom' END,
+        CASE WHEN id='ws_page_52' THEN 'Z Other Clinic' ELSE 'Z Cardiology Clinic' END
+      FROM care_spaces WHERE id GLOB 'ws_page_*'`),
+  ]);
+  const firstPage = await request(bloomDoctor, "/v1/workspaces?search=cardio");
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.data.workspaces.length, 50);
+  const secondPage = await request(
+    bloomDoctor,
+    "/v1/workspaces?search=cardio&cursor=" +
+      encodeURIComponent(firstPage.data.nextCursor),
+  );
+  assert.equal(secondPage.status, 200);
+  assert.deepEqual(
+    secondPage.data.workspaces.map((w) => w.spaceId),
+    ["ws_page_50", "ws_page_51"],
+  );
+  assert.equal(secondPage.data.nextCursor, null);
+  assert.equal(
+    (await request(bloomDoctor, "/v1/workspaces?cursor=invalid")).status,
+    400,
+  );
+
+  const joinPath = "/v1/workspaces/join";
+  const baseSize = JSON.stringify({
+    spaceId: bloomCardioSpace,
+    padding: "",
+  }).length;
+  const oversized = await request(bloomDoctor, joinPath, "POST", {
+    spaceId: bloomCardioSpace,
+    padding: "é".repeat(20001 - baseSize),
   });
+  assert.equal(oversized.status, 413);
+  // 3. Doctor cannot request to join a workspace in another organization
+  const crossOrgJoin = await request(
+    bloomDoctor,
+    "/v1/workspaces/join",
+    "POST",
+    {
+      spaceId: apolloHeartSpace,
+    },
+  );
   assert.equal(crossOrgJoin.status, 403);
 
   // 4. Doctor requests to join Cardiology Clinic in their own organization
-  const joinRes = await request(bloomDoctor, "/v1/workspaces/join", "POST", {
-    spaceId: bloomCardioSpace,
-  });
+  const firstJoins = await Promise.all(
+    Array.from({ length: 2 }, () =>
+      request(bloomDoctor, joinPath, "POST", {
+        spaceId: bloomCardioSpace,
+        padding: "é".repeat(20000 - baseSize),
+      }),
+    ),
+  );
+  assert.deepEqual(firstJoins.map((res) => res.status).sort(), [200, 409]);
+  const joinRes = firstJoins.find((res) => res.status === 200);
   assert.equal(joinRes.status, 200);
   assert.equal(joinRes.data.request.status, "Pending");
   const requestId = joinRes.data.request.id;
@@ -207,7 +261,9 @@ module.exports = async ({ db, request }) => {
     "/v1/workspaces/admin/requests?status=Pending",
   );
   assert.equal(adminQueue.status, 200);
-  assert.ok(adminQueue.data.requests.some((r) => r.id === requestId));
+  const firstAttempt = adminQueue.data.requests.find(
+    (r) => r.id === requestId,
+  ).attempt;
 
   const rejectRes = await request(
     bloomAdmin,
@@ -215,6 +271,7 @@ module.exports = async ({ db, request }) => {
     "POST",
     {
       requestId,
+      attempt: firstAttempt,
       decision: "Rejected",
       reason: "Awaiting shift confirmation",
     },
@@ -227,26 +284,66 @@ module.exports = async ({ db, request }) => {
   );
 
   // Doctor re-requests after rejection, then Bloom admin approves
-  const rejoinRes = await request(bloomDoctor, "/v1/workspaces/join", "POST", {
-    spaceId: bloomCardioSpace,
-  });
-  assert.equal(rejoinRes.status, 200);
-  assert.equal(rejoinRes.data.request.status, "Pending");
+  const retries = await Promise.all(
+    Array.from({ length: 2 }, () =>
+      request(bloomDoctor, joinPath, "POST", { spaceId: bloomCardioSpace }),
+    ),
+  );
+  assert.deepEqual(retries.map((res) => res.status).sort(), [200, 409]);
+  assert.equal(
+    retries.find((res) => res.status === 200).data.request.status,
+    "Pending",
+  );
 
-  const approveRes = await request(
+  const reviewPath = "/v1/workspaces/admin/review";
+  const stale = await request(bloomAdmin, reviewPath, "POST", {
+    requestId,
+    attempt: firstAttempt,
+    decision: "Approved",
+  });
+  assert.equal(stale.status, 409);
+  assert.equal(
+    await db
+      .prepare("SELECT 1 FROM memberships WHERE space_id=? AND user_id=?")
+      .bind(bloomCardioSpace, bloomDoctor)
+      .first(),
+    null,
+  );
+
+  const currentQueue = await request(
     bloomAdmin,
-    "/v1/workspaces/admin/review",
-    "POST",
-    {
-      requestId: rejoinRes.data.request.id,
-      decision: "Approved",
-      reason: "Verified clinic roster",
-    },
+    "/v1/workspaces/admin/requests",
+  );
+  const attempt = currentQueue.data.requests.find(
+    (r) => r.id === requestId,
+  ).attempt;
+  assert.notEqual(attempt, firstAttempt);
+  const reviews = await Promise.all(
+    Array.from({ length: 2 }, () =>
+      request(bloomAdmin, reviewPath, "POST", {
+        requestId,
+        attempt,
+        decision: "Approved",
+        reason: "Verified clinic roster",
+      }),
+    ),
+  );
+  assert.deepEqual(reviews.map((res) => res.status).sort(), [200, 409]);
+  const approveRes = reviews.find((res) => res.status === 200);
+  const audit = await db
+    .prepare(
+      "SELECT action FROM security_audit WHERE actor_id=? AND space_id=? AND target_id=? ORDER BY id",
+    )
+    .bind(bloomAdmin, bloomCardioSpace, bloomDoctor)
+    .all();
+  assert.deepEqual(
+    audit.results.map((row) => row.action),
+    ["workspace.join.reject", "workspace.join.approve"],
   );
   assert.equal(approveRes.status, 200);
   assert.equal(approveRes.data.status, "Approved");
 
-  // Verify membership was granted in memberships with records_access=0 and appears in /v1/spaces
+  // Verify membership was granted in memberships with records_access=0, without access until assignment
   const membership = await db
     .prepare(
       "SELECT role, records_access FROM memberships WHERE user_id=? AND space_id=?",
@@ -258,13 +355,14 @@ module.exports = async ({ db, request }) => {
 
   const docSpaces = await request(bloomDoctor, "/v1/spaces");
   assert.equal(docSpaces.status, 200);
-  assert.ok(
-    docSpaces.data.some((s) => s.id === bloomCardioSpace && s.role === "Doctor"),
-    "Approved workspace must appear in doctor's /v1/spaces",
+  assert.ok(!docSpaces.data.some((s) => s.id === bloomCardioSpace));
+  assert.equal(
+    (await request(bloomDoctor, "/v1/state?space=" + bloomCardioSpace)).status,
+    403,
   );
 
   // 8. Day 4 End-to-End: First-time doctor onboarding -> approval -> Doctor Home -> patient search -> consultation request
-  const fullFlowDoc = "e2e_full_doc_" + randomUUID().slice(0, 8);
+  const fullFlowDoc = "n_e2e_full_doc_" + randomUUID().slice(0, 8);
   const fullFlowPatient = "e2e_full_pat_" + randomUUID().slice(0, 8);
   const fullFlowReviewer = "e2e_full_rev_" + randomUUID().slice(0, 8);
 
@@ -347,6 +445,10 @@ module.exports = async ({ db, request }) => {
     },
   );
   assert.equal(unapprovedBook.status, 400);
+  assert.equal(
+    unapprovedBook.data.error,
+    "This professional is not accepting new bookings.",
+  );
 
   // Reviewer approves the doctor
   await db
@@ -375,7 +477,23 @@ module.exports = async ({ db, request }) => {
   const fullDocSpaces = await request(fullFlowDoc, "/v1/spaces");
   assert.equal(fullDocSpaces.status, 200);
   const fullDocHomeSpace = fullDocSpaces.data.find((s) => s.role === "Doctor");
-  assert.ok(fullDocHomeSpace);
+  assert.equal(fullDocHomeSpace.id, "doctor_dashboard_" + fullFlowDoc);
+  const personalDoctorState = await request(fullFlowDoc, "/v1/state");
+  assert.equal(personalDoctorState.data.spaceId, "personal_" + fullFlowDoc);
+  assert.equal(personalDoctorState.data.state.session.role, "Patient");
+  const selfBooking = await request(fullFlowDoc, "/v1/actions", "POST", {
+    revision: personalDoctorState.data.revision,
+    operationId: randomUUID(),
+    action: {
+      type: "book",
+      visit: { providerId: fullFlowDoc, date: futureVisitDate, time: "10:00 AM" },
+    },
+  });
+  assert.equal(selfBooking.status, 409);
+  assert.equal(
+    (await request(fullFlowDoc, "/v1/state")).data.state.session.role,
+    "Patient",
+  );
   const fullDocHomeState = await request(
     fullFlowDoc,
     "/v1/state?space=" + fullDocHomeSpace.id,
@@ -423,6 +541,52 @@ module.exports = async ({ db, request }) => {
   assert.equal(bookRes.data.state.visits.length, 1);
   assert.equal(bookRes.data.state.visits[0].providerId, fullFlowDoc);
   assert.equal(bookRes.data.state.visits[0].status, "Requested");
+
+  const requested = bookRes.data.state.visits[0];
+  assert.equal(requested.providerKind, "Doctor");
+  const assignedSpaces = await request(fullFlowDoc, "/v1/spaces");
+  assert.ok(
+    assignedSpaces.data.some(
+      (s) => s.id === patInit.spaceId && s.role === "Doctor",
+    ),
+  );
+  const doctorVisitPath = "/v1/state?space=" + patInit.spaceId;
+  const doctorVisit = await request(fullFlowDoc, doctorVisitPath);
+  assert.equal(doctorVisit.status, 200);
+  assert.equal(doctorVisit.data.recordsAccess, false);
+  assert.equal(doctorVisit.data.state.visits[0].id, requested.id);
+  const bookPath = "/v1/actions?space=" + patInit.spaceId;
+  const accepted = await request(fullFlowDoc, bookPath, "POST", {
+    revision: doctorVisit.data.revision,
+    operationId: randomUUID(),
+    action: { type: "status", visitId: requested.id, status: "Confirmed" },
+  });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.data));
+  assert.equal(accepted.data.state.visits[0].status, "Confirmed");
+
+  await db
+    .prepare(
+      "UPDATE verification_applications SET valid_until='2000-01-01' WHERE id=?",
+    )
+    .bind(docSubmit.data.id)
+    .run();
+  assert.equal(
+    (await request(fullFlowDoc, "/v1/state")).data.state.session.role,
+    "Patient",
+  );
+  assert.equal(
+    (await request(fullFlowDoc, "/v1/state?space=" + fullDocHomeSpace.id))
+      .status,
+    403,
+  );
+  assert.equal((await request(fullFlowDoc, doctorVisitPath)).status, 403);
+  const expiredBook = await request(fullFlowPatient, bookPath, "POST", {
+    revision: accepted.data.revision,
+    operationId: randomUUID(),
+    action: { type: "book", visit: { ...requested, time: "11:30 AM" } },
+  });
+  assert.equal(expiredBook.status, 400);
+  assert.equal(expiredBook.data.error, unapprovedBook.data.error);
 
   console.log(
     "Passed: organization workspace browsing, org-scoped isolation, join requests, zero access while pending/rejected, and admin review approval.",

@@ -20,7 +20,15 @@ INSERT INTO memberships (user_id, space_id, role, provider_id)
 VALUES ('user_DOCTOR_ID', 'personal_user_PATIENT_ID', 'Doctor', '1');
 ```
 
-Use `Nurse` and the corresponding provider ID, or `Family` with an empty provider ID. Family membership also needs the patient's consent switch. Delete the membership to revoke staff access. The app's Profile screen lists the user's authorized care spaces and roles. IDs `1`, `2`, etc. and `n1`, `n2` refer to the existing **fictional** provider directory; replace those fixtures with your verified provider directory before offering real care bookings. Cloud bookings stay requested until an assigned professional confirms them. Staff access is scoped to the patient care space and the professional's assigned visits; patient records are shared within that authorized care space.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:99e5bcc6cb4e698c7961f7c062003585bf6b83c921b6e9e97698f553297e00e3 -->
+
+Use `Nurse` and the corresponding provider ID, or `Family` with an empty provider ID. Family membership also needs the patient's consent switch. Cloud booking requires current Doctor or Nurse verification in D1. A successful booking creates staff membership for the assigned professional with records access off by default, and the visit stays Requested until they confirm it. The app's Profile screen lists authorized spaces. Staff need a non-cancelled assigned visit to open a patient space; access to clinical records requires an additional patient grant. An approved Doctor's dashboard (`doctor_dashboard_<Clerk user ID>`) is separate from their personal Patient space.
+
+Apply migration `0008_workspace_join_attempt.sql` before deploying the workspace review changes. Admins must send the numeric `attempt` from `GET /v1/workspaces/admin/requests` when reviewing a join request. If the request was reopened, reload the queue before reviewing it. Workspace approval creates membership, and the space appears in `/v1/spaces` once the Doctor has an assigned visit. For workspace search, pass the previous response's `nextCursor` as a URL-encoded `cursor` query parameter with the same search filter. A null cursor indicates the last page.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## Data behavior and limits
 
