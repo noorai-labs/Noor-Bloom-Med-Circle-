@@ -424,6 +424,11 @@ export async function workspaceRoute(
          SET status=?, reason=?, reviewed_by=?, updated_at=CURRENT_TIMESTAMP
          WHERE id=? AND status='Pending' AND attempt=?
            AND EXISTS (
+             SELECT 1 FROM workspace_organizations wo
+             WHERE wo.space_id=workspace_join_requests.space_id
+               AND wo.organization_id=workspace_join_requests.organization_id
+           )
+           AND EXISTS (
              SELECT 1 FROM organization_admins a
              WHERE a.organization_id=workspace_join_requests.organization_id
                AND a.user_id=? AND a.active=1

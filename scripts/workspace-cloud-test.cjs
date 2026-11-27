@@ -701,6 +701,59 @@ module.exports = async ({ db, request }) => {
   assert.equal(expiredBook.status, 400);
   assert.equal(expiredBook.data.error, unapprovedBook.data.error);
 
+  // Ownership change after join request must prevent approval by old org admin
+  const bloomTransferSpace = "ws_transfer_" + randomUUID().slice(0, 8);
+  await db.batch([
+    db
+      .prepare("INSERT INTO care_spaces (id, state) VALUES (?, ?)")
+      .bind(bloomTransferSpace, privateCareState),
+    db
+      .prepare(
+        "INSERT INTO workspace_organizations (space_id, organization_id, name) VALUES (?, 'org_bloom', 'Transfer Clinic')",
+      )
+      .bind(bloomTransferSpace),
+  ]);
+  const transferredReq = await request(
+    bloomDoctor,
+    "/v1/workspaces/join",
+    "POST",
+    { spaceId: bloomTransferSpace },
+  );
+  assert.equal(transferredReq.status, 200);
+  await db
+    .prepare(
+      "UPDATE workspace_organizations SET organization_id='org_apollo' WHERE space_id=?",
+    )
+    .bind(bloomTransferSpace)
+    .run();
+  const staleOwnerReview = await request(
+    bloomAdmin,
+    "/v1/workspaces/admin/review",
+    "POST",
+    {
+      requestId: transferredReq.data.request.id,
+      decision: "Approved",
+      attempt: 1,
+    },
+  );
+  assert.equal(staleOwnerReview.status, 409);
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT status FROM workspace_join_requests WHERE id=?")
+        .bind(transferredReq.data.request.id)
+        .first()
+    ).status,
+    "Pending",
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT 1 FROM memberships WHERE user_id=? AND space_id=?")
+      .bind(bloomDoctor, bloomTransferSpace)
+      .first(),
+    null,
+  );
+
   console.log(
     "Passed: organization workspace browsing, org-scoped isolation, join requests, zero access while pending/rejected, and admin review approval.",
   );
