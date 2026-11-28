@@ -34,6 +34,12 @@ export type CloudControls = {
   providers: (
     query?: import("./cloud-api").ProvidersQuery,
   ) => Promise<import("./cloud-api").ProvidersResponse>;
+  directory: {
+    organizations: (search: string) => Promise<import("./cloud-api").CloudOrganization[]>;
+    workspaces: (search: string) => Promise<import("./cloud-api").CloudWorkspace[]>;
+    requests: () => Promise<import("./cloud-api").CloudWorkspaceRequest[]>;
+    join: (spaceId: string) => Promise<void>;
+  };
   availability: {
     get: (providerId?: string) => Promise<import("./cloud-api").AvailabilityResponse>;
     save: (

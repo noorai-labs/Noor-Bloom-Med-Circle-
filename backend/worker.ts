@@ -1,3 +1,4 @@
+import { doctorDashboardId } from "../src/care-space-ids";
 import { fileKey } from "./storage";
 import { verifyToken } from "@clerk/backend";
 import {
@@ -30,6 +31,7 @@ import {
   AvailabilityError,
   checkDoctorAvailabilityForSlot,
 } from "./availability";
+import { workspaceRoute, WorkspaceError } from "./workspaces";
 export { MedicineReminderScheduler } from "./reminders";
 
 type Env = ReminderEnv &
@@ -128,40 +130,74 @@ async function userId(request: Request, env: Env) {
 }
 async function ensureAccount(env: Env, user: string) {
   const space = "personal_" + user;
-  await env.DB.batch([
+  const doctorApp = await env.DB.prepare(
+    "SELECT id FROM verification_applications WHERE user_id=? AND kind='Doctor' AND status='Approved' AND valid_until>?",
+  )
+    .bind(user, verificationDay())
+    .first();
+  const dashboard = doctorDashboardId(user);
+  const state = JSON.stringify(emptyState());
+  const statements = [
     env.DB.prepare(
       "INSERT OR IGNORE INTO care_spaces (id,state) VALUES (?,?)",
-    ).bind(space, JSON.stringify(emptyState())),
+    ).bind(space, state),
     env.DB.prepare(
       "INSERT OR IGNORE INTO memberships (user_id,space_id,role) VALUES (?,?,'Patient')",
     ).bind(user, space),
-  ]);
+    // Restore personal spaces converted by the previous dashboard implementation.
+    env.DB.prepare(
+      "UPDATE memberships SET role='Patient', provider_id='' WHERE user_id=? AND space_id=? AND role='Doctor' AND provider_id=?",
+    ).bind(user, space, user),
+  ];
+  if (doctorApp) {
+    statements.push(
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO care_spaces (id,state) VALUES (?,?)",
+      ).bind(dashboard, state),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO memberships (user_id,space_id,role,provider_id) VALUES (?,?,'Doctor',?)",
+      ).bind(user, dashboard, user),
+    );
+  }
+  await env.DB.batch(statements);
   return space;
 }
+type ProfessionalKind = "Doctor" | "Nurse";
+type ProfessionalVerification = {
+  status: string | null;
+  valid_until: string | null;
+};
+const isProfessional = (role: Role): role is ProfessionalKind =>
+  role === "Doctor" || role === "Nurse";
+const professionalAllowed = (
+  user: string,
+  member: Pick<Member, "provider_id"> & ProfessionalVerification,
+) =>
+  member.status === null
+    ? member.provider_id !== user // Legacy operator-assigned provider IDs.
+    : member.status === "Approved" &&
+      (member.valid_until ?? "") > verificationDay();
+const hasAssignedVisit = (state: ClinicState, providerId: string) =>
+  state.visits.some(
+    (v) => v.providerId === providerId && v.status !== "Cancelled",
+  );
+
 async function access(env: Env, user: string, space: string) {
   const member = await env.DB.prepare(
-    "SELECT role,provider_id,records_access FROM memberships WHERE user_id=? AND space_id=?",
+    `SELECT m.role,m.provider_id,m.records_access,v.status,v.valid_until
+     FROM memberships m LEFT JOIN verification_applications v
+       ON v.user_id=m.user_id AND v.kind=m.role
+     WHERE m.user_id=? AND m.space_id=?`,
   )
     .bind(user, space)
-    .first<Member>();
+    .first<Member & ProfessionalVerification>();
   if (!member)
     throw new HttpError(403, "You do not have access to this care space.");
-  if (member.role === "Doctor" || member.role === "Nurse") {
-    const application = await env.DB.prepare(
-      "SELECT status,valid_until FROM verification_applications WHERE user_id=? AND kind=?",
-    )
-      .bind(user, member.role)
-      .first<{ status: string; valid_until: string }>();
-    if (
-      application &&
-      (application.status !== "Approved" ||
-        application.valid_until <= verificationDay())
-    )
-      throw new HttpError(
-        403,
-        "Professional verification is pending, suspended or expired. Open your personal care space to review your application.",
-      );
-  }
+  if (isProfessional(member.role) && !professionalAllowed(user, member))
+    throw new HttpError(
+      403,
+      "Professional verification is pending, suspended or expired. Open your personal care space to review your application.",
+    );
   if (member.role === "Admin")
     throw new HttpError(
       403,
@@ -185,10 +221,9 @@ async function access(env: Env, user: string, space: string) {
       "Family consent is not enabled for this care space.",
     );
   if (
-    ["Doctor", "Nurse"].includes(member.role) &&
-    !state.visits.some(
-      (v) => v.providerId === member.provider_id && v.status !== "Cancelled",
-    )
+    isProfessional(member.role) &&
+    !(member.role === "Doctor" && space === doctorDashboardId(user)) &&
+    !hasAssignedVisit(state, member.provider_id)
   )
     throw new HttpError(403, "An active assigned visit is required.");
   return {
@@ -200,7 +235,17 @@ async function access(env: Env, user: string, space: string) {
 }
 function visibleSnapshot(snapshot: Awaited<ReturnType<typeof access>>) {
   const { recordsAccess, ...result } = snapshot;
+  const session = result.state.session;
+  if (session && isProfessional(session.role)) {
+    result.state = {
+      ...result.state,
+      visits: result.state.visits.filter(
+        (v) => v.providerId === session.providerId,
+      ),
+    };
+  }
   if (recordsAccess) return { ...result, recordsAccess: true };
+  const assignedVisitIds = new Set(result.state.visits.map((v) => v.id));
   return {
     ...result,
     recordsAccess: false,
@@ -208,6 +253,13 @@ function visibleSnapshot(snapshot: Awaited<ReturnType<typeof access>>) {
       ...result.state,
       records: [],
       consultations: [],
+      ...(session?.role === "Doctor"
+        ? {
+            savedConsultationVisitIds: result.state.consultations
+              .filter((note) => assignedVisitIds.has(note.visitId))
+              .map((note) => note.visitId),
+          }
+        : {}),
       medicines: [],
       activities: [],
       visits: result.state.visits.map((v) => ({ ...v, notes: "", reason: "" })),
@@ -281,6 +333,23 @@ async function route(
     return providerRoute(request, env, user);
   if (url.pathname === "/v1/availability")
     return availabilityRoute(request, env, user);
+  if (url.pathname === "/v1/organizations" && request.method === "GET") {
+    const search = url.searchParams.get("search")?.trim().toLowerCase() || "";
+    let query = "SELECT id, name, code FROM organizations";
+    const bindings: unknown[] = [];
+    if (search) {
+      query += " WHERE LOWER(name) LIKE ? OR LOWER(code) LIKE ?";
+      bindings.push("%" + search + "%", "%" + search + "%");
+    }
+    query += " ORDER BY name ASC LIMIT 50";
+    const rows = await env.DB.prepare(query).bind(...bindings).all();
+    return Response.json({ organizations: rows.results });
+  }
+  if (
+    url.pathname === "/v1/workspaces" ||
+    url.pathname.startsWith("/v1/workspaces/")
+  )
+    return workspaceRoute(request, env, user);
   if (
     url.pathname === "/v1/reminders/revoke-session" &&
     request.method === "POST"
@@ -315,21 +384,46 @@ async function route(
   }
   const personal = await ensureAccount(env, user);
   if (url.pathname === "/v1/spaces" && request.method === "GET") {
+    const dashboard = doctorDashboardId(user);
     const rows = await env.DB.prepare(
-      "SELECT c.id,c.state,m.role,m.provider_id FROM memberships m JOIN care_spaces c ON c.id=m.space_id WHERE m.user_id=?",
+      `SELECT c.id,c.state,m.role,m.provider_id,v.status,v.valid_until
+       FROM memberships m JOIN care_spaces c ON c.id=m.space_id
+       LEFT JOIN verification_applications v ON v.user_id=m.user_id AND v.kind=m.role
+       WHERE m.user_id=?
+       ORDER BY (c.id=?) DESC`,
     )
-      .bind(user)
-      .all<{ id: string; state: string; role: Role; provider_id: string }>();
+      .bind(user, dashboard)
+      .all<
+        {
+          id: string;
+          state: string;
+          role: Role;
+          provider_id: string;
+        } & ProfessionalVerification
+      >();
     return Response.json(
-      rows.results.map((r) => ({
-        id: r.id,
-        name:
-          r.role === "Family" && !JSON.parse(r.state).profile.consent
-            ? "Consent required"
-            : JSON.parse(r.state).profile.name || "My care space",
-        role: r.role,
-        providerId: r.provider_id,
-      })),
+      rows.results.flatMap((r) => {
+        const state: ClinicState = JSON.parse(r.state);
+        const isDashboard = r.role === "Doctor" && r.id === dashboard;
+        if (
+          isProfessional(r.role) &&
+          (!professionalAllowed(user, r) ||
+            (!isDashboard && !hasAssignedVisit(state, r.provider_id)))
+        )
+          return [];
+        return [
+          {
+            id: r.id,
+            name: isDashboard
+              ? "Doctor Dashboard"
+              : r.role === "Family" && !state.profile.consent
+                ? "Consent required"
+                : state.profile.name || "My care space",
+            role: r.role,
+            providerId: r.provider_id,
+          },
+        ];
+      }),
     );
   }
   const space = url.searchParams.get("space") || personal;
@@ -559,16 +653,133 @@ async function route(
           "The patient needs an active manual identity review before booking.",
         );
     }
+    const recordedOp = await env.DB.prepare(
+      "SELECT 1 FROM completed_operations WHERE space_id=? AND operation_id=?",
+    )
+      .bind(space, operationId)
+      .first();
+    if (recordedOp) {
+      return Response.json(visibleSnapshot(snapshot), {
+        headers: { "X-Idempotent-Replay": "true" },
+      });
+    }
     if (revision !== snapshot.revision)
       throw new HttpError(
         409,
         "Care data changed on another device. Refresh and try again.",
       );
-    if (JSON.stringify(snapshot.state).includes(operationId))
-      throw new HttpError(
-        409,
-        "This update has already been applied. Refresh your care data.",
+    let verifiedProvider:
+      { user_id: string; kind: ProfessionalKind } | undefined;
+    if (action.type === "book") {
+      if (
+        !action.visit ||
+        typeof action.visit !== "object" ||
+        typeof action.visit.providerId !== "string" ||
+        typeof action.visit.date !== "string" ||
+        typeof action.visit.time !== "string"
+      ) {
+        throw new HttpError(400, "Invalid booking request.");
+      }
+      const provider = await env.DB.prepare(
+        `SELECT v.user_id,v.kind,m.role AS member_role,m.provider_id AS member_provider_id
+         FROM verification_applications v
+         LEFT JOIN memberships m ON m.user_id=v.user_id AND m.space_id=?
+         WHERE v.user_id=? AND v.kind IN ('Doctor','Nurse')
+           AND v.status='Approved' AND v.valid_until>?
+         ORDER BY COALESCE(m.role=v.kind,0) DESC,v.kind LIMIT 1`,
+      )
+        .bind(space, action.visit.providerId, verificationDay())
+        .first<{
+          user_id: string;
+          kind: ProfessionalKind;
+          member_role: Role | null;
+          member_provider_id: string | null;
+        }>();
+      if (!provider)
+        throw new HttpError(
+          400,
+          "This professional is not accepting new bookings.",
+        );
+      if (
+        provider.member_role !== null &&
+        (provider.member_role !== provider.kind ||
+          provider.member_provider_id !== provider.user_id)
+      )
+        throw new HttpError(
+          409,
+          "This professional has a different role in this care space.",
+        );
+      verifiedProvider = provider;
+      action.visit = { ...action.visit, providerKind: verifiedProvider.kind };
+      const existingSlot = await env.DB.prepare(
+        `
+        SELECT 1 FROM appointment_slots
+        WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')
+        UNION ALL
+        SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
+        WHERE json_extract(value, '$.providerId') = ?
+          AND json_extract(value, '$.date') = ?
+          AND json_extract(value, '$.time') = ?
+          AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+        LIMIT 1
+      `,
+      )
+        .bind(
+          action.visit.providerId,
+          action.visit.date,
+          action.visit.time,
+          action.visit.providerId,
+          action.visit.date,
+          action.visit.time,
+        )
+        .first();
+      if (existingSlot) {
+        throw new HttpError(
+          409,
+          "This slot is already booked for this care professional.",
+        );
+      }
+    }
+    if (action.type === "reschedule") {
+      if (
+        typeof action.visitId !== "string" ||
+        typeof action.date !== "string" ||
+        typeof action.time !== "string"
+      ) {
+        throw new HttpError(400, "Invalid reschedule request.");
+      }
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
       );
+      if (currentVisit) {
+        const targetSlot = await env.DB.prepare(`
+          SELECT 1 FROM appointment_slots
+          WHERE provider_id=? AND date=? AND time=? AND visit_id!=? AND status IN ('Requested', 'Confirmed', 'In Progress')
+          UNION ALL
+          SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
+          WHERE json_extract(value, '$.providerId') = ?
+            AND json_extract(value, '$.date') = ?
+            AND json_extract(value, '$.time') = ?
+            AND json_extract(value, '$.id') != ?
+            AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+          LIMIT 1
+        `)
+          .bind(
+            currentVisit.providerId,
+            action.date,
+            action.time,
+            action.visitId,
+            currentVisit.providerId,
+            action.date,
+            action.time,
+            action.visitId,
+          )
+          .first();
+        if (targetSlot) {
+          throw new HttpError(409, "That slot is already booked.");
+        }
+      }
+    }
     if (
       ["record", "deleteRecord"].includes(action.type) &&
       snapshot.state.session?.role !== "Patient"
@@ -604,56 +815,7 @@ async function route(
         },
       };
     }
-    let stateForTransition = snapshot.state;
-    let actionForTransition = action;
-    if (
-      action.type === "book" &&
-      !providers.some((p) => p.id === action.visit.providerId)
-    ) {
-      const verifiedProvider = await env.DB.prepare(
-        "SELECT details, kind FROM verification_applications WHERE user_id=? AND status='Approved' AND valid_until > ? AND kind IN ('Doctor','Nurse')",
-      )
-        .bind(action.visit.providerId, verificationDay())
-        .first<{ details?: string; kind?: string }>();
-      if (verifiedProvider) {
-        if (!snapshot.state.approved.includes(action.visit.providerId)) {
-          stateForTransition = {
-            ...snapshot.state,
-            approved: [...snapshot.state.approved, action.visit.providerId],
-          };
-        }
-        let verifiedName: string | undefined;
-        try {
-          const parsed = JSON.parse(verifiedProvider.details || "{}") as {
-            fullName?: unknown;
-          };
-          if (typeof parsed.fullName === "string" && parsed.fullName.trim()) {
-            const rawName = parsed.fullName.trim();
-            verifiedName =
-              verifiedProvider.kind === "Doctor" && !/^Dr\.?\s/i.test(rawName)
-                ? `Dr. ${rawName}`
-                : rawName;
-          }
-        } catch {
-          verifiedName = undefined;
-        }
-        if (verifiedName || action.visit.providerName) {
-          actionForTransition = {
-            ...action,
-            visit: {
-              ...action.visit,
-              providerName: verifiedName || action.visit.providerName,
-            },
-          };
-        }
-      } else if (snapshot.state.approved.includes(action.visit.providerId)) {
-        stateForTransition = {
-          ...snapshot.state,
-          approved: snapshot.state.approved.filter(
-            (id) => id !== action.visit.providerId,
-          ),
-        };
-      }
+    if (action.type === "book" && verifiedProvider?.kind === "Doctor") {
       await checkDoctorAvailabilityForSlot(
         env,
         action.visit.providerId,
@@ -666,7 +828,7 @@ async function route(
       );
       if (
         targetVisit &&
-        !providers.some((p) => p.id === targetVisit.providerId)
+        targetVisit.providerKind === "Doctor"
       ) {
         await checkDoctorAvailabilityForSlot(
           env,
@@ -676,9 +838,17 @@ async function route(
         );
       }
     }
+    const stateForTransition =
+      verifiedProvider &&
+      !snapshot.state.approved.includes(verifiedProvider.user_id)
+        ? {
+            ...snapshot.state,
+            approved: [...snapshot.state.approved, verifiedProvider.user_id],
+          }
+        : snapshot.state;
     let next: ClinicState;
     try {
-      next = cloudTransition(stateForTransition, actionForTransition, operationId);
+      next = cloudTransition(stateForTransition, action, operationId);
     } catch (error) {
       throw new HttpError(
         400,
@@ -700,6 +870,9 @@ async function route(
         "care." + action.type,
         action.type === "deleteRecord" ? action.recordId : operationId,
       ),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO completed_operations(space_id, operation_id) SELECT ?,? WHERE changes()>0",
+      ).bind(space, operationId),
     ];
     if (action.type === "record") {
       const record = next.records[0];
@@ -717,7 +890,248 @@ async function route(
         ),
       );
     }
-    const saved = await env.DB.batch(statements);
+    if (action.type === "book" && verifiedProvider) {
+      const newVisit =
+        next.visits.find((v) => v.id.includes(operationId)) ||
+        next.visits[next.visits.length - 1];
+      if (newVisit) {
+        statements.push(
+          env.DB.prepare(
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) SELECT ?,?,?,?,?,?,? WHERE changes() > 0",
+          ).bind(
+            `slot_${space}_${newVisit.id}`,
+            newVisit.providerId,
+            newVisit.date,
+            newVisit.time,
+            space,
+            newVisit.id,
+            newVisit.status,
+          ),
+          env.DB.prepare(
+            "INSERT INTO memberships(user_id,space_id,role,provider_id) SELECT ?,?,?,? WHERE changes()>0 ON CONFLICT(user_id,space_id) DO NOTHING",
+          ).bind(
+            verifiedProvider.user_id,
+            space,
+            verifiedProvider.kind,
+            verifiedProvider.user_id,
+          ),
+        );
+      }
+    }
+    if (action.type === "reschedule") {
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
+      const visit = next.visits.find((v) => v.id === action.visitId);
+      if (currentVisit && visit) {
+        statements.push(
+          env.DB.prepare(
+            `
+            UPDATE appointment_slots
+            SET id = COALESCE((
+                  SELECT 'slot_' || care_spaces.id || '_' || json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), id),
+                space_id = COALESCE((
+                  SELECT care_spaces.id
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), space_id),
+                visit_id = COALESCE((
+                  SELECT json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), visit_id),
+                status = COALESCE((
+                  SELECT json_extract(value, '$.status')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), 'Cancelled'),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE ((space_id=? AND visit_id=?) OR (provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress'))) AND changes() > 0
+          `,
+          ).bind(
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          ),
+        );
+
+        statements.push(
+          env.DB.prepare(
+            "INSERT INTO appointment_slots(id, provider_id, date, time, space_id, visit_id, status) SELECT ?,?,?,?,?,?,? WHERE changes() > 0 ON CONFLICT(id) DO UPDATE SET date=excluded.date, time=excluded.time, status=excluded.status, updated_at=CURRENT_TIMESTAMP WHERE changes() > 0",
+          ).bind(
+            `slot_${space}_${action.visitId}`,
+            visit.providerId,
+            action.date,
+            action.time,
+            space,
+            action.visitId,
+            visit.status,
+          ),
+        );
+      }
+    }
+    if (
+      action.type === "status" &&
+      ["Cancelled", "Completed"].includes(action.status)
+    ) {
+      const currentVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
+      if (currentVisit) {
+        statements.push(
+          env.DB.prepare(
+            `
+            UPDATE appointment_slots
+            SET id = COALESCE((
+                  SELECT 'slot_' || care_spaces.id || '_' || json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), id),
+                space_id = COALESCE((
+                  SELECT care_spaces.id
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), space_id),
+                visit_id = COALESCE((
+                  SELECT json_extract(value, '$.id')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), visit_id),
+                status = COALESCE((
+                  SELECT json_extract(value, '$.status')
+                  FROM care_spaces, json_each(care_spaces.state, '$.visits')
+                  WHERE (care_spaces.id != ? OR json_extract(value, '$.id') != ?)
+                    AND json_extract(value, '$.providerId') = ?
+                    AND json_extract(value, '$.date') = ?
+                    AND json_extract(value, '$.time') = ?
+                    AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
+                  LIMIT 1
+                ), ?),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE ((space_id=? AND visit_id=?) OR (provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress'))) AND changes() > 0
+          `,
+          ).bind(
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+            action.status,
+            space,
+            action.visitId,
+            currentVisit.providerId,
+            currentVisit.date,
+            currentVisit.time,
+          ),
+        );
+      } else {
+        statements.push(
+          env.DB.prepare(
+            "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+          ).bind(action.status, space, action.visitId),
+        );
+      }
+    } else if (action.type === "status") {
+      statements.push(
+        env.DB.prepare(
+          "UPDATE appointment_slots SET status=?, updated_at=CURRENT_TIMESTAMP WHERE space_id=? AND visit_id=? AND changes() > 0",
+        ).bind(action.status, space, action.visitId),
+      );
+    }
+    let saved;
+    try {
+      saved = await env.DB.batch(statements);
+    } catch (dbError: unknown) {
+      const msg = dbError instanceof Error ? dbError.message : String(dbError);
+      if (
+        msg.includes("UNIQUE constraint failed") ||
+        msg.includes("constraint failed")
+      ) {
+        if (action.type === "reschedule") {
+          throw new HttpError(409, "That slot is already booked.");
+        }
+        throw new HttpError(
+          409,
+          "This slot is already booked for this care professional.",
+        );
+      }
+      throw dbError;
+    }
     if (!saved[0].meta.changes)
       throw new HttpError(409, "Care data changed. Refresh and try again.");
     if (
@@ -845,7 +1259,8 @@ export default {
         !(e instanceof VerificationError) &&
         !(e instanceof CallError) &&
         !(e instanceof ProviderError) &&
-        !(e instanceof AvailabilityError)
+        !(e instanceof AvailabilityError) &&
+        !(e instanceof WorkspaceError)
       )
         console.error("Unexpected Worker operation failure");
       response = Response.json(
@@ -855,7 +1270,8 @@ export default {
             e instanceof VerificationError ||
             e instanceof CallError ||
             e instanceof ProviderError ||
-            e instanceof AvailabilityError
+            e instanceof AvailabilityError ||
+            e instanceof WorkspaceError
               ? e.message
               : "Unable to complete the cloud request.",
         },
@@ -865,7 +1281,8 @@ export default {
             e instanceof VerificationError ||
             e instanceof CallError ||
             e instanceof ProviderError ||
-            e instanceof AvailabilityError
+            e instanceof AvailabilityError ||
+            e instanceof WorkspaceError
               ? e.status
               : 500,
         },

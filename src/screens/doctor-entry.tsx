@@ -1,3 +1,4 @@
+import { doctorDashboardId } from "../care-space-ids";
 import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { Redirect, router, useLocalSearchParams } from "expo-router";
@@ -84,7 +85,9 @@ export default function DoctorEntry() {
   const { state, cloud, notify } = useClinic();
   const { audience, ready } = useLoginAudience();
   const client = useRef(cloud?.verification);
+  const directory = useRef(cloud?.directory);
   useEffect(() => {
+    directory.current = cloud?.directory;
     client.current = cloud?.verification;
   }, [cloud]);
 
@@ -144,11 +147,13 @@ export default function DoctorEntry() {
       setOrgLoading(true);
       setOrgError("");
       try {
-        const result = await fetchOrganizations(
-          debouncedQuery,
-          filterType,
-          filterCity,
-        );
+        const result: Organization[] = directory.current
+          ? (await directory.current.organizations(debouncedQuery)).map((org) => ({
+              ...org, city: "", state: "", type: "Clinic System",
+              licenseNumber: "", verified: true, departments: [],
+              description: "", badge: org.code || org.name.slice(0, 2),
+            }))
+          : await fetchOrganizations(debouncedQuery, filterType, filterCity);
         if (active) setOrgs(result);
       } catch (e) {
         if (active) {
@@ -212,6 +217,9 @@ export default function DoctorEntry() {
     application?.status === "Needs information" ||
     application?.status === "Rejected";
 
+  const dashboardId = doctorDashboardId(state.session.identifier);
+  const dashboard = spaces.find((space) => space.id === dashboardId);
+  const assigned = spaces.filter((space) => space.id !== dashboardId);
   async function run(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
@@ -274,9 +282,10 @@ export default function DoctorEntry() {
             label="Search organization"
             value={searchQuery}
             onChange={setSearchQuery}
-            placeholder="Search by hospital, clinic name or city..."
+            placeholder={cloud ? "Search by organization name or code" : "Search by hospital, clinic name or city..."}
           />
 
+          {!cloud && <>
           <View style={{ gap: 6 }}>
             <Label>TYPE</Label>
             <OrgFilterRow
@@ -303,6 +312,7 @@ export default function DoctorEntry() {
               onChange={setFilterCity}
             />
           </View>
+          </>}
         </Card>
 
         {!orgLoading && !orgError && (
@@ -389,7 +399,7 @@ export default function DoctorEntry() {
                       <View style={{ flex: 1 }}>
                         <Title small>{org.name}</Title>
                         <Body muted style={{ fontSize: 12 }}>
-                          {org.city}, {org.state} · {org.type}
+                          {cloud ? org.badge : `${org.city}, ${org.state} · ${org.type}`}
                         </Body>
                       </View>
                     </View>
@@ -440,8 +450,7 @@ export default function DoctorEntry() {
           >
             <Title small>Selected: {selectedOrg.name}</Title>
             <Body muted style={{ fontSize: 12 }}>
-              {selectedOrg.city}, {selectedOrg.state} · License:{" "}
-              {selectedOrg.licenseNumber}
+              {cloud ? selectedOrg.badge : `${selectedOrg.city}, ${selectedOrg.state} · License: ${selectedOrg.licenseNumber}`}
             </Body>
             <Button
               title="Continue to verification documents"
@@ -490,9 +499,8 @@ export default function DoctorEntry() {
           muted
           style={{ textAlign: "center", fontSize: 13, lineHeight: 18 }}
         >
-          Doctor access is managed separately from patient access. You need to be
-          approved as a doctor and assigned to a patient care space before you can
-          use the doctor workspace.
+          Doctor access is managed separately from patient access. Professional approval opens Doctor Home.
+          Patient workspaces are assigned separately.
         </Body>
       </View>
 
@@ -539,7 +547,11 @@ export default function DoctorEntry() {
           <Button
             title="Open Doctor Home"
             icon="arrow-forward"
-            onPress={() => router.push("/(tabs)")}
+            disabled={!dashboard || busy}
+            onPress={() => void run(async () => {
+              if (dashboard && cloud) await cloud.select(dashboard.id);
+              router.push("/(tabs)");
+            })}
           />
         </Card>
       )}
@@ -723,15 +735,15 @@ export default function DoctorEntry() {
           <View style={{ flex: 1 }}>
             <Title small>Assigned patient workspaces</Title>
             <Body muted style={{ fontSize: 13 }}>
-              {spaces.length
-                ? `${spaces.length} patient care space(s) assigned.`
+              {assigned.length
+                ? `${assigned.length} patient care space(s) assigned.`
                 : "No doctor care space assigned yet."}
             </Body>
           </View>
         </View>
 
-        {spaces.length > 0 &&
-          spaces.map((space) => (
+        {assigned.length > 0 &&
+          assigned.map((space) => (
             <Button
               key={space.id}
               title={"Open " + space.name}

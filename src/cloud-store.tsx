@@ -20,6 +20,9 @@ import {
   saveCloudAvailability,
   writeCloud,
   type CloudSnapshot,
+  type CloudOrganization,
+  type CloudWorkspace,
+  type CloudWorkspaceRequest,
   type CareSpace,
 } from "./cloud-api";
 import { ClinicContext } from "./store";
@@ -528,6 +531,36 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
                 encodeURIComponent(spaceId),
             ),
           providers: async (query) => listCloudProviders(await token(), query),
+          directory: {
+            organizations: async (search) =>
+              (await cloudRequest<{ organizations: CloudOrganization[] }>(
+                await token(), "/v1/organizations?search=" + encodeURIComponent(search),
+              )).organizations,
+            workspaces: async (search) => {
+              const accessToken = await token();
+              const rows: CloudWorkspace[] = [];
+              let cursor: string | null = null;
+              do {
+                const query = new URLSearchParams({ search });
+                if (cursor) query.set("cursor", cursor);
+                const page: { workspaces: CloudWorkspace[]; nextCursor: string | null } =
+                  await cloudRequest(accessToken, "/v1/workspaces?" + query.toString());
+                rows.push(...page.workspaces);
+                cursor = page.nextCursor;
+              } while (cursor);
+              return rows;
+            },
+            requests: async () =>
+              (await cloudRequest<{ requests: CloudWorkspaceRequest[] }>(
+                await token(), "/v1/workspaces/requests",
+              )).requests,
+            join: async (spaceId) => {
+              await cloudRequest(await token(), "/v1/workspaces/join", {
+                method: "POST",
+                body: JSON.stringify({ spaceId }),
+              });
+            },
+          },
           availability: {
             get: async (providerId) =>
               getCloudAvailability(await token(), providerId),

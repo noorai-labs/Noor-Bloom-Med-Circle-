@@ -1,5 +1,6 @@
+import { doctorDashboardId } from "../care-space-ids";
 import { providers } from "../provider-display";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
@@ -94,8 +95,16 @@ export function DoctorVisitCard({ visit }: { visit: Visit }) {
 
 export function DoctorHome() {
   const { state, cloud, notify } = useClinic();
-  const hasAssignedWorkspace = !cloud || state.session?.role === "Doctor";
-  const hasAnyDoctorSpace = !!cloud?.spaces.some((s) => s.role === "Doctor");
+  const client = useRef(cloud);
+  useEffect(() => {
+    client.current = cloud;
+  }, [cloud]);
+  const dashboard = doctorDashboardId(state.session?.identifier ?? "");
+  const hasAssignedWorkspace =
+    !cloud || (state.session?.role === "Doctor" && cloud.spaceId !== dashboard);
+  const hasAnyDoctorSpace = !!cloud?.spaces.some(
+    (space) => space.role === "Doctor" && space.id !== dashboard,
+  );
   const visits = hasAssignedWorkspace ? visibleVisits(state) : [];
   const today = visits.filter(
     (v) => v.date === dayKey() && v.status !== "Cancelled",
@@ -134,7 +143,17 @@ export function DoctorHome() {
 
   async function loadRequests() {
     try {
-      const reqs = await getWorkspaceJoinRequests(doctorUserId);
+      const reqs = client.current
+        ? (await client.current.directory.requests()).map((request): WorkspaceJoinRequest => ({
+            ...request,
+            organizationName: "",
+            doctorUserId,
+            doctorName,
+            workspaceId: request.spaceId,
+            requestedAt: request.createdAt,
+            status: request.status === "Rejected" ? "Declined" : request.status,
+          }))
+        : await getWorkspaceJoinRequests(doctorUserId);
       setJoinRequests(reqs);
       setReqStale(false);
     } catch {
@@ -150,7 +169,17 @@ export function DoctorHome() {
       const org = await getSelectedOrganization();
       if (isCurrent && org) setSelectedOrg(org);
       try {
-        const reqs = await getWorkspaceJoinRequests(doctorUserId);
+        const reqs = client.current
+        ? (await client.current.directory.requests()).map((request): WorkspaceJoinRequest => ({
+            ...request,
+            organizationName: "",
+            doctorUserId,
+            doctorName,
+            workspaceId: request.spaceId,
+            requestedAt: request.createdAt,
+            status: request.status === "Rejected" ? "Declined" : request.status,
+          }))
+        : await getWorkspaceJoinRequests(doctorUserId);
         if (isCurrent) {
           setJoinRequests(reqs);
           setReqStale(false);
@@ -162,7 +191,7 @@ export function DoctorHome() {
     return () => {
       isCurrent = false;
     };
-  }, [doctorUserId]);
+  }, [doctorUserId, doctorName]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -172,7 +201,12 @@ export function DoctorHome() {
       setWsLoading(true);
       setWsError("");
       try {
-        const list = await fetchWorkspaces(selectedOrg?.id, debouncedQuery);
+        const list: OrganizationWorkspace[] = client.current
+          ? (await client.current.directory.workspaces(debouncedQuery)).map((ws) => ({
+              ...ws, id: ws.spaceId, specialty: "", department: "",
+              activePatients: 0, openCases: 0, adminName: "", description: "",
+            }))
+          : await fetchWorkspaces(selectedOrg?.id, debouncedQuery);
         if (isCurrent) setWorkspaces(list);
       } catch (e) {
         if (isCurrent) {
@@ -197,6 +231,12 @@ export function DoctorHome() {
     setRequestingId(ws.id);
     setRequestError("");
     try {
+      if (cloud) {
+        await cloud.directory.join(ws.id);
+        await loadRequests();
+        notify(`Join request sent for ${ws.name}`);
+        return;
+      }
       const created = await submitWorkspaceJoinRequest(
         doctorUserId,
         doctorName,
@@ -372,7 +412,7 @@ export function DoctorHome() {
               </View>
               <Chip title={req.status} />
             </View>
-            {req.status === "Pending" && (
+            {!cloud && req.status === "Pending" && (
               <Button
                 title="Withdraw request"
                 secondary
@@ -400,7 +440,7 @@ export function DoctorHome() {
           label="Search workspaces"
           value={workspaceQuery}
           onChange={setWorkspaceQuery}
-          placeholder="Search by workspace name, department or specialty..."
+          placeholder={cloud ? "Search by workspace name" : "Search by workspace name, department or specialty..."}
         />
 
         {!!requestError && (
@@ -447,7 +487,10 @@ export function DoctorHome() {
           workspaces.map((ws) => {
             const req = joinRequests.find((r) => r.workspaceId === ws.id);
             const isPending = req?.status === "Pending";
-            const isApproved = req?.status === "Approved";
+            const assignedSpace = cloud?.spaces.find(
+              (space) => space.id === ws.id && space.role === "Doctor",
+            );
+            const isApproved = !!assignedSpace || req?.status === "Approved";
             const isDeclined = req?.status === "Declined";
             return (
               <Card
@@ -462,7 +505,7 @@ export function DoctorHome() {
                   <View style={{ flex: 1 }}>
                     <Title small>{ws.name}</Title>
                     <Body muted style={{ fontSize: 12 }}>
-                      {ws.department} · {ws.specialty}
+                      {cloud ? "Organization workspace" : `${ws.department} · ${ws.specialty}`}
                     </Body>
                   </View>
                   <Chip
@@ -490,8 +533,16 @@ export function DoctorHome() {
                   <Button
                     title="Open assigned workspace"
                     icon="enter-outline"
-                    disabled={!hasAssignedWorkspace}
-                    onPress={() => router.push("/(tabs)/patients")}
+                    disabled={cloud ? !assignedSpace : !hasAssignedWorkspace}
+                    onPress={() => {
+                      if (cloud && assignedSpace) {
+                        void cloud.select(assignedSpace.id)
+                          .then(() => router.push("/(tabs)/patients"))
+                          .catch(() => notify("Unable to open that patient care space."));
+                      } else if (!cloud) {
+                        router.push("/(tabs)/patients");
+                      }
+                    }}
                   />
                 ) : isPending ? (
                   <Button
@@ -642,8 +693,9 @@ export function DoctorPatients() {
   const { state, cloud, notify } = useClinic();
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
+  const dashboard = doctorDashboardId(state.session?.identifier ?? "");
   const spaces = cloud
-    ? cloud.spaces.filter((s) => s.role === "Doctor")
+    ? cloud.spaces.filter((s) => s.role === "Doctor" && s.id !== dashboard)
     : [
         {
           id: "demo",

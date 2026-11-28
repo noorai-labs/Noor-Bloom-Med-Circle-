@@ -143,3 +143,22 @@ export const writeCloud = (
     "/v1/actions?space=" + encodeURIComponent(space),
     { method: "POST", body: JSON.stringify({ revision, action, operationId }) },
   );
+
+export type CloudOrganization = { id: string; name: string; code: string };
+export type CloudWorkspace = {
+  spaceId: string;
+  name: string;
+  organizationId: string;
+  member: boolean;
+  requestStatus: string | null;
+};
+export type CloudWorkspaceRequest = {
+  id: string;
+  spaceId: string;
+  workspaceName: string;
+  organizationId: string;
+  status: "Pending" | "Approved" | "Rejected";
+  reason: string;
+  createdAt: string;
+  updatedAt: string;
+};

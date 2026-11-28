@@ -7,6 +7,7 @@ export type VisitStatus =
 export type Visit = {
   id: string;
   providerId: string;
+  providerKind?: "Doctor" | "Nurse";
   date: string;
   time: string;
   service: string;
@@ -71,11 +72,19 @@ export type ClinicState = {
   medicines: Medicine[];
   records: RecordItem[];
   consultations: Consultation[];
+  // Snapshot metadata for Doctors who cannot read consultation contents.
+  savedConsultationVisitIds?: string[];
   activities: Activity[];
   approved: string[];
   issues: { id: string; subject: string; resolved: boolean }[];
   sos: boolean;
 };
+export function hasSavedConsultation(s: ClinicState, visitId: string) {
+  return (
+    s.consultations.some((note) => note.visitId === visitId) ||
+    s.savedConsultationVisitIds?.includes(visitId) === true
+  );
+}
 export const providers = [...doctors, ...nurses];
 let sequence = 0;
 export const id = (prefix: string) =>
@@ -111,13 +120,24 @@ export const times = [
 ];
 export const providerFor = (visit: Visit) =>
   providers.find((p) => p.id === visit.providerId) || {
-    ...doctors[0],
     id: visit.providerId,
-    name: visit.providerName?.trim() || "Care professional",
-    specialty: "Verified professional",
+    name: visit.providerName?.trim() || "Assigned care professional",
+    specialty: "Care team",
+    experience: 0,
     initials: "CP",
+    color: "#E1ECE2",
+    rating: "",
+    fee: 0,
+    about: "",
+    skills: "",
   };
 export const nursing = (providerId: string) => providerId.startsWith("n");
+export const nursingVisit = (
+  visit: Pick<Visit, "providerId" | "providerKind">,
+) =>
+  visit.providerKind
+    ? visit.providerKind === "Nurse"
+    : nursing(visit.providerId);
 export const terminal = (v: Visit) =>
   ["Completed", "Cancelled"].includes(v.status);
 export function createState(): ClinicState {
@@ -426,7 +446,7 @@ export function transition(
     const visit: Visit = {
       ...a.visit,
       id: makeId("visit"),
-      status: nursing(a.visit.providerId) ? "Requested" : "Confirmed",
+      status: nursingVisit(a.visit) ? "Requested" : "Confirmed",
       checklist: [false, false, false, false],
       notes: "",
     };
@@ -466,14 +486,14 @@ export function transition(
         throw new Error("This visit cannot move to that status.");
       if (
         a.status === "Completed" &&
-        nursing(v.providerId) &&
+        nursingVisit(v) &&
         (!v.checklist.every(Boolean) || !v.notes.trim())
       )
         throw new Error("Complete the care checklist and visit notes first.");
       if (
         a.status === "Completed" &&
-        !nursing(v.providerId) &&
-        !s.consultations.some((n) => n.visitId === v.id)
+        !nursingVisit(v) &&
+        !hasSavedConsultation(s, v.id)
       )
         throw new Error("Save consultation notes before completing the visit.");
       return activity(
@@ -543,7 +563,7 @@ export function transition(
       requireAccess(s, ["Doctor"]);
       if (v.status !== "In Progress" || !a.text.trim())
         throw new Error("Start this visit and add consultation notes.");
-      if (s.consultations.some((n) => n.visitId === v.id))
+      if (hasSavedConsultation(s, v.id))
         throw new Error(
           "Consultation notes have already been saved for this visit.",
         );

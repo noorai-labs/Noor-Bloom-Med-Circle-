@@ -15,11 +15,11 @@ export type VerificationDetails = {
   registrationNumber: string;
   qualification: string;
   consent: boolean;
-  organizationId?: string;
-  organizationName?: string;
   specialty?: string;
   languages?: string[];
   modes?: string[];
+  organizationId?: string;
+  organizationName?: string;
 };
 export type VerificationApplication = {
   id: string;
