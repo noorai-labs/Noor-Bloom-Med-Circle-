@@ -1,4 +1,4 @@
 {
   "compilerOptions": { "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "noEmit": true, "skipLibCheck": true, "types": ["@cloudflare/workers-types"], "lib": ["ES2022"] },
-  "include": ["worker.ts", "../src/clinic.ts", "../src/data.ts"]
+  "include": ["worker.ts", "db/**/*.ts", "../src/clinic.ts", "../src/data.ts"]
 }
