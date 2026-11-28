@@ -1,3 +1,4 @@
+import { doctorDashboardId } from "../src/care-space-ids";
 import { fileKey } from "./storage";
 import { verifyToken } from "@clerk/backend";
 import {
@@ -24,6 +25,7 @@ import {
   type CallEnv,
 } from "./calls";
 import { providerRoute, ProviderError } from "./providers";
+import { workspaceRoute, WorkspaceError } from "./workspaces";
 export { MedicineReminderScheduler } from "./reminders";
 
 type Env = ReminderEnv &
@@ -122,40 +124,74 @@ async function userId(request: Request, env: Env) {
 }
 async function ensureAccount(env: Env, user: string) {
   const space = "personal_" + user;
-  await env.DB.batch([
+  const doctorApp = await env.DB.prepare(
+    "SELECT id FROM verification_applications WHERE user_id=? AND kind='Doctor' AND status='Approved' AND valid_until>?",
+  )
+    .bind(user, verificationDay())
+    .first();
+  const dashboard = doctorDashboardId(user);
+  const state = JSON.stringify(emptyState());
+  const statements = [
     env.DB.prepare(
       "INSERT OR IGNORE INTO care_spaces (id,state) VALUES (?,?)",
-    ).bind(space, JSON.stringify(emptyState())),
+    ).bind(space, state),
     env.DB.prepare(
       "INSERT OR IGNORE INTO memberships (user_id,space_id,role) VALUES (?,?,'Patient')",
     ).bind(user, space),
-  ]);
+    // Restore personal spaces converted by the previous dashboard implementation.
+    env.DB.prepare(
+      "UPDATE memberships SET role='Patient', provider_id='' WHERE user_id=? AND space_id=? AND role='Doctor' AND provider_id=?",
+    ).bind(user, space, user),
+  ];
+  if (doctorApp) {
+    statements.push(
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO care_spaces (id,state) VALUES (?,?)",
+      ).bind(dashboard, state),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO memberships (user_id,space_id,role,provider_id) VALUES (?,?,'Doctor',?)",
+      ).bind(user, dashboard, user),
+    );
+  }
+  await env.DB.batch(statements);
   return space;
 }
+type ProfessionalKind = "Doctor" | "Nurse";
+type ProfessionalVerification = {
+  status: string | null;
+  valid_until: string | null;
+};
+const isProfessional = (role: Role): role is ProfessionalKind =>
+  role === "Doctor" || role === "Nurse";
+const professionalAllowed = (
+  user: string,
+  member: Pick<Member, "provider_id"> & ProfessionalVerification,
+) =>
+  member.status === null
+    ? member.provider_id !== user // Legacy operator-assigned provider IDs.
+    : member.status === "Approved" &&
+      (member.valid_until ?? "") > verificationDay();
+const hasAssignedVisit = (state: ClinicState, providerId: string) =>
+  state.visits.some(
+    (v) => v.providerId === providerId && v.status !== "Cancelled",
+  );
+
 async function access(env: Env, user: string, space: string) {
   const member = await env.DB.prepare(
-    "SELECT role,provider_id,records_access FROM memberships WHERE user_id=? AND space_id=?",
+    `SELECT m.role,m.provider_id,m.records_access,v.status,v.valid_until
+     FROM memberships m LEFT JOIN verification_applications v
+       ON v.user_id=m.user_id AND v.kind=m.role
+     WHERE m.user_id=? AND m.space_id=?`,
   )
     .bind(user, space)
-    .first<Member>();
+    .first<Member & ProfessionalVerification>();
   if (!member)
     throw new HttpError(403, "You do not have access to this care space.");
-  if (member.role === "Doctor" || member.role === "Nurse") {
-    const application = await env.DB.prepare(
-      "SELECT status,valid_until FROM verification_applications WHERE user_id=? AND kind=?",
-    )
-      .bind(user, member.role)
-      .first<{ status: string; valid_until: string }>();
-    if (
-      application &&
-      (application.status !== "Approved" ||
-        application.valid_until <= verificationDay())
-    )
-      throw new HttpError(
-        403,
-        "Professional verification is pending, suspended or expired. Open your personal care space to review your application.",
-      );
-  }
+  if (isProfessional(member.role) && !professionalAllowed(user, member))
+    throw new HttpError(
+      403,
+      "Professional verification is pending, suspended or expired. Open your personal care space to review your application.",
+    );
   if (member.role === "Admin")
     throw new HttpError(
       403,
@@ -179,10 +215,9 @@ async function access(env: Env, user: string, space: string) {
       "Family consent is not enabled for this care space.",
     );
   if (
-    ["Doctor", "Nurse"].includes(member.role) &&
-    !state.visits.some(
-      (v) => v.providerId === member.provider_id && v.status !== "Cancelled",
-    )
+    isProfessional(member.role) &&
+    !(member.role === "Doctor" && space === doctorDashboardId(user)) &&
+    !hasAssignedVisit(state, member.provider_id)
   )
     throw new HttpError(403, "An active assigned visit is required.");
   return {
@@ -194,7 +229,17 @@ async function access(env: Env, user: string, space: string) {
 }
 function visibleSnapshot(snapshot: Awaited<ReturnType<typeof access>>) {
   const { recordsAccess, ...result } = snapshot;
+  const session = result.state.session;
+  if (session && isProfessional(session.role)) {
+    result.state = {
+      ...result.state,
+      visits: result.state.visits.filter(
+        (v) => v.providerId === session.providerId,
+      ),
+    };
+  }
   if (recordsAccess) return { ...result, recordsAccess: true };
+  const assignedVisitIds = new Set(result.state.visits.map((v) => v.id));
   return {
     ...result,
     recordsAccess: false,
@@ -202,6 +247,13 @@ function visibleSnapshot(snapshot: Awaited<ReturnType<typeof access>>) {
       ...result.state,
       records: [],
       consultations: [],
+      ...(session?.role === "Doctor"
+        ? {
+            savedConsultationVisitIds: result.state.consultations
+              .filter((note) => assignedVisitIds.has(note.visitId))
+              .map((note) => note.visitId),
+          }
+        : {}),
       medicines: [],
       activities: [],
       visits: result.state.visits.map((v) => ({ ...v, notes: "", reason: "" })),
@@ -273,6 +325,23 @@ async function route(
     url.pathname.startsWith("/v1/providers/")
   )
     return providerRoute(request, env, user);
+  if (url.pathname === "/v1/organizations" && request.method === "GET") {
+    const search = url.searchParams.get("search")?.trim().toLowerCase() || "";
+    let query = "SELECT id, name, code FROM organizations";
+    const bindings: unknown[] = [];
+    if (search) {
+      query += " WHERE LOWER(name) LIKE ? OR LOWER(code) LIKE ?";
+      bindings.push("%" + search + "%", "%" + search + "%");
+    }
+    query += " ORDER BY name ASC LIMIT 50";
+    const rows = await env.DB.prepare(query).bind(...bindings).all();
+    return Response.json({ organizations: rows.results });
+  }
+  if (
+    url.pathname === "/v1/workspaces" ||
+    url.pathname.startsWith("/v1/workspaces/")
+  )
+    return workspaceRoute(request, env, user);
   if (
     url.pathname === "/v1/reminders/revoke-session" &&
     request.method === "POST"
@@ -307,21 +376,46 @@ async function route(
   }
   const personal = await ensureAccount(env, user);
   if (url.pathname === "/v1/spaces" && request.method === "GET") {
+    const dashboard = doctorDashboardId(user);
     const rows = await env.DB.prepare(
-      "SELECT c.id,c.state,m.role,m.provider_id FROM memberships m JOIN care_spaces c ON c.id=m.space_id WHERE m.user_id=?",
+      `SELECT c.id,c.state,m.role,m.provider_id,v.status,v.valid_until
+       FROM memberships m JOIN care_spaces c ON c.id=m.space_id
+       LEFT JOIN verification_applications v ON v.user_id=m.user_id AND v.kind=m.role
+       WHERE m.user_id=?
+       ORDER BY (c.id=?) DESC`,
     )
-      .bind(user)
-      .all<{ id: string; state: string; role: Role; provider_id: string }>();
+      .bind(user, dashboard)
+      .all<
+        {
+          id: string;
+          state: string;
+          role: Role;
+          provider_id: string;
+        } & ProfessionalVerification
+      >();
     return Response.json(
-      rows.results.map((r) => ({
-        id: r.id,
-        name:
-          r.role === "Family" && !JSON.parse(r.state).profile.consent
-            ? "Consent required"
-            : JSON.parse(r.state).profile.name || "My care space",
-        role: r.role,
-        providerId: r.provider_id,
-      })),
+      rows.results.flatMap((r) => {
+        const state: ClinicState = JSON.parse(r.state);
+        const isDashboard = r.role === "Doctor" && r.id === dashboard;
+        if (
+          isProfessional(r.role) &&
+          (!professionalAllowed(user, r) ||
+            (!isDashboard && !hasAssignedVisit(state, r.provider_id)))
+        )
+          return [];
+        return [
+          {
+            id: r.id,
+            name: isDashboard
+              ? "Doctor Dashboard"
+              : r.role === "Family" && !state.profile.consent
+                ? "Consent required"
+                : state.profile.name || "My care space",
+            role: r.role,
+            providerId: r.provider_id,
+          },
+        ];
+      }),
     );
   }
   const space = url.searchParams.get("space") || personal;
@@ -566,6 +660,8 @@ async function route(
         409,
         "Care data changed on another device. Refresh and try again.",
       );
+    let verifiedProvider:
+      { user_id: string; kind: ProfessionalKind } | undefined;
     if (action.type === "book") {
       if (
         !action.visit ||
@@ -576,7 +672,39 @@ async function route(
       ) {
         throw new HttpError(400, "Invalid booking request.");
       }
-      const existingSlot = await env.DB.prepare(`
+      const provider = await env.DB.prepare(
+        `SELECT v.user_id,v.kind,m.role AS member_role,m.provider_id AS member_provider_id
+         FROM verification_applications v
+         LEFT JOIN memberships m ON m.user_id=v.user_id AND m.space_id=?
+         WHERE v.user_id=? AND v.kind IN ('Doctor','Nurse')
+           AND v.status='Approved' AND v.valid_until>?
+         ORDER BY COALESCE(m.role=v.kind,0) DESC,v.kind LIMIT 1`,
+      )
+        .bind(space, action.visit.providerId, verificationDay())
+        .first<{
+          user_id: string;
+          kind: ProfessionalKind;
+          member_role: Role | null;
+          member_provider_id: string | null;
+        }>();
+      if (!provider)
+        throw new HttpError(
+          400,
+          "This professional is not accepting new bookings.",
+        );
+      if (
+        provider.member_role !== null &&
+        (provider.member_role !== provider.kind ||
+          provider.member_provider_id !== provider.user_id)
+      )
+        throw new HttpError(
+          409,
+          "This professional has a different role in this care space.",
+        );
+      verifiedProvider = provider;
+      action.visit = { ...action.visit, providerKind: verifiedProvider.kind };
+      const existingSlot = await env.DB.prepare(
+        `
         SELECT 1 FROM appointment_slots 
         WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')
         UNION ALL
@@ -586,7 +714,8 @@ async function route(
           AND json_extract(value, '$.time') = ?
           AND json_extract(value, '$.status') IN ('Requested', 'Confirmed', 'In Progress')
         LIMIT 1
-      `)
+      `,
+      )
         .bind(
           action.visit.providerId,
           action.visit.date,
@@ -678,9 +807,17 @@ async function route(
         },
       };
     }
+    const stateForTransition =
+      verifiedProvider &&
+      !snapshot.state.approved.includes(verifiedProvider.user_id)
+        ? {
+            ...snapshot.state,
+            approved: [...snapshot.state.approved, verifiedProvider.user_id],
+          }
+        : snapshot.state;
     let next: ClinicState;
     try {
-      next = cloudTransition(snapshot.state, action, operationId);
+      next = cloudTransition(stateForTransition, action, operationId);
     } catch (error) {
       throw new HttpError(
         400,
@@ -722,7 +859,7 @@ async function route(
         ),
       );
     }
-    if (action.type === "book") {
+    if (action.type === "book" && verifiedProvider) {
       const newVisit =
         next.visits.find((v) => v.id.includes(operationId)) ||
         next.visits[next.visits.length - 1];
@@ -738,6 +875,14 @@ async function route(
             space,
             newVisit.id,
             newVisit.status,
+          ),
+          env.DB.prepare(
+            "INSERT INTO memberships(user_id,space_id,role,provider_id) SELECT ?,?,?,? WHERE changes()>0 ON CONFLICT(user_id,space_id) DO NOTHING",
+          ).bind(
+            verifiedProvider.user_id,
+            space,
+            verifiedProvider.kind,
+            verifiedProvider.user_id,
           ),
         );
       }
@@ -1082,7 +1227,8 @@ export default {
         !(e instanceof HttpError) &&
         !(e instanceof VerificationError) &&
         !(e instanceof CallError) &&
-        !(e instanceof ProviderError)
+        !(e instanceof ProviderError) &&
+        !(e instanceof WorkspaceError)
       )
         console.error("Unexpected Worker operation failure");
       response = Response.json(
@@ -1091,7 +1237,8 @@ export default {
             e instanceof HttpError ||
             e instanceof VerificationError ||
             e instanceof CallError ||
-            e instanceof ProviderError
+            e instanceof ProviderError ||
+            e instanceof WorkspaceError
               ? e.message
               : "Unable to complete the cloud request.",
         },
@@ -1100,7 +1247,8 @@ export default {
             e instanceof HttpError ||
             e instanceof VerificationError ||
             e instanceof CallError ||
-            e instanceof ProviderError
+            e instanceof ProviderError ||
+            e instanceof WorkspaceError
               ? e.status
               : 500,
         },

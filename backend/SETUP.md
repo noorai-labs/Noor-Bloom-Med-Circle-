@@ -15,12 +15,37 @@ The Expo app has two explicit modes. `demo` preserves the existing local walkthr
 
 Each Google account automatically gets an empty patient care space. Its ID is `personal_<Clerk user ID>`. A trusted operator grants staff/family membership through D1. The client has no endpoint for granting itself access:
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:b3a6e977e3f85bd20dde52daa98b4cc8afe8c08fd053ad031a9b3b450fedc7c2 -->
+
 ```sql
 INSERT INTO memberships (user_id, space_id, role, provider_id)
-VALUES ('user_DOCTOR_ID', 'personal_user_PATIENT_ID', 'Doctor', '1');
+VALUES ('user_DOCTOR_ID', 'personal_user_PATIENT_ID', 'Doctor', 'user_DOCTOR_ID');
 ```
 
-Use `Nurse` and the corresponding provider ID, or `Family` with an empty provider ID. Family membership also needs the patient's consent switch. Delete the membership to revoke staff access. The app's Profile screen lists the user's authorized care spaces and roles. IDs `1`, `2`, etc. and `n1`, `n2` refer to the existing **fictional** provider directory; replace those fixtures with your verified provider directory before offering real care bookings. Cloud bookings stay requested until an assigned professional confirms them. Staff access is scoped to the patient care space and the professional's assigned visits; patient records are shared within that authorized care space.
+Use the Clerk user ID of a verified Doctor. For each care space you want to list as an organization workspace, use an organization ID from the seeded `organizations` directory (`SELECT id, name FROM organizations;`). After applying migrations `0006_organizations.sql` and `0007_workspace_requests.sql`, link the space with a display name and grant the intended Clerk user active admin access for that organization:
+
+```sql
+INSERT INTO workspace_organizations (space_id, organization_id, name)
+VALUES ('personal_user_PATIENT_ID', 'org_bloom', 'Cardiology Clinic');
+
+INSERT INTO organization_admins (user_id, organization_id, active)
+VALUES ('user_ORG_ADMIN_ID', 'org_bloom', 1)
+ON CONFLICT (user_id, organization_id) DO UPDATE SET active = 1;
+```
+
+<!-- /coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:99e5bcc6cb4e698c7961f7c062003585bf6b83c921b6e9e97698f553297e00e3 -->
+
+Use `Nurse` and the corresponding provider ID, or `Family` with an empty provider ID. Family membership also needs the patient's consent switch. Cloud booking requires current Doctor or Nurse verification in D1. A successful booking creates staff membership for the assigned professional with records access off by default, and the visit stays Requested until they confirm it. The app's Profile screen lists authorized spaces. Staff need a non-cancelled assigned visit to open a patient space; access to clinical records requires an additional patient grant. An approved Doctor's dashboard (`doctor_dashboard_<Clerk user ID>`) is separate from their personal Patient space.
+
+Apply migration `0008_workspace_join_attempt.sql` before deploying the workspace review changes. Admins must send the numeric `attempt` from `GET /v1/workspaces/admin/requests` when reviewing a join request. If the request was reopened, reload the queue before reviewing it. Workspace approval creates membership, and the space appears in `/v1/spaces` once the Doctor has an assigned visit. For workspace search, pass the previous response's `nextCursor` as a URL-encoded `cursor` query parameter with the same search filter. A null cursor indicates the last page.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## Data behavior and limits
 
