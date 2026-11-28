@@ -25,11 +25,13 @@ import {
   type CallEnv,
 } from "./calls";
 import { providerRoute, ProviderError } from "./providers";
+import { voiceRoute, VoiceError, type VoiceEnv } from "./voice";
 import { workspaceRoute, WorkspaceError } from "./workspaces";
 export { MedicineReminderScheduler } from "./reminders";
 
 type Env = ReminderEnv &
-  CallEnv & {
+  CallEnv &
+  VoiceEnv & {
     DB: D1Database;
     FILES: R2Bucket;
     FILES_PREFIX?: string;
@@ -306,6 +308,8 @@ async function route(
     return new Response(logo.body, { headers: { "Content-Type": "image/png" } });
   }
   const { user, session } = await userId(request, env);
+  if (url.pathname.startsWith("/v1/voice/"))
+    return voiceRoute(request, env, user);
   if (url.pathname.startsWith("/v1/calls/"))
     return callRoute(request, env, user, session);
   if (url.pathname.startsWith("/v1/verification")) {
@@ -1228,6 +1232,7 @@ export default {
         !(e instanceof VerificationError) &&
         !(e instanceof CallError) &&
         !(e instanceof ProviderError) &&
+        !(e instanceof VoiceError) &&
         !(e instanceof WorkspaceError)
       )
         console.error("Unexpected Worker operation failure");
@@ -1238,6 +1243,7 @@ export default {
             e instanceof VerificationError ||
             e instanceof CallError ||
             e instanceof ProviderError ||
+            e instanceof VoiceError ||
             e instanceof WorkspaceError
               ? e.message
               : "Unable to complete the cloud request.",
@@ -1248,6 +1254,7 @@ export default {
             e instanceof VerificationError ||
             e instanceof CallError ||
             e instanceof ProviderError ||
+            e instanceof VoiceError ||
             e instanceof WorkspaceError
               ? e.status
               : 500,

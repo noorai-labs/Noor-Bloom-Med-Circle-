@@ -301,7 +301,7 @@ export function visibleVisits(s: ClinicState) {
         slotMinutes(a.time) - slotMinutes(b.time),
     );
 }
-function slotMinutes(time: string) {
+export function slotMinutes(time: string) {
   const match = /^(\d{1,2}):(\d{2}) (AM|PM)$/.exec(time);
   if (!match) return 0;
   return ((+match[1] % 12) + (match[3] === "PM" ? 12 : 0)) * 60 + +match[2];

@@ -48,6 +48,50 @@ export async function cloudRequest<T>(
     clearTimeout(timer);
   }
 }
+export async function cloudBinaryRequest(
+  token: string,
+  path: string,
+  init: RequestInit = {},
+  externalSignal?: AbortSignal,
+): Promise<ArrayBuffer> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(apiUrl + path, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...init.headers,
+        Authorization: "Bearer " + token,
+      },
+    });
+    if (!response.ok) {
+      let message = "Cloud request failed.";
+      try {
+        const result = (await response.json()) as { error?: string };
+        if (result?.error) message = result.error;
+      } catch {
+        // ignore non-JSON error body
+      }
+      throw new CloudError(message, response.status);
+    }
+    return await response.arrayBuffer();
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", onAbort);
+    }
+  }
+}
 export const readCloud = (token: string, space = "") =>
   cloudRequest<CloudSnapshot>(
     token,

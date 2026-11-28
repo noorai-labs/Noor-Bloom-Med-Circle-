@@ -18,19 +18,27 @@ import {
   theme,
   Title,
 } from "../components";
-import { VoicePoweredOrb, VoiceOrbModal } from "../voice-orb";
+import { VoiceModal } from "../voice-modal";
+import { VoicePoweredOrb } from "../voice-orb";
 export default function AssistantScreen() {
+  const [voiceOpen, setVoiceOpen] = useState(false);
+
   if (cloudMode)
     return (
       <Screen title="Care navigation">
         <Card>
-          <Title small>Open your care workspace</Title>
+          <Title small>Voice & Care Navigation</Title>
           <Body>
-            Use your appointments, records and medicines directly. The assistant
-            is not connected.
+            Speak to navigate your care space, check medicines, or open records.
           </Body>
           <Button
+            title="Open Voice Assistant"
+            icon="mic"
+            onPress={() => setVoiceOpen(true)}
+          />
+          <Button
             title="Open appointments"
+            secondary
             onPress={() => router.push("/(tabs)/appointments")}
           />
           <Button
@@ -39,10 +47,16 @@ export default function AssistantScreen() {
             onPress={() => router.push("/(tabs)/records")}
           />
         </Card>
+        <VoiceModal
+          visible={voiceOpen}
+          onClose={() => setVoiceOpen(false)}
+          defaultLanguage="en-IN"
+        />
       </Screen>
     );
   return <DemoAssistantScreen />;
 }
+
 function DemoAssistantScreen() {
   const { state } = useClinic();
   const [messages, setMessages] = useState([
@@ -55,12 +69,14 @@ function DemoAssistantScreen() {
   const [thinking, setThinking] = useState(false);
   const [voice, setVoice] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
     },
     [],
   );
+
   function send(value: string) {
     if (!value.trim() || thinking) return;
     const t = value.toLowerCase();
@@ -105,6 +121,7 @@ function DemoAssistantScreen() {
       setThinking(false);
     }, 650);
   }
+
   return (
     <Screen
       title="A little help from Bloom"
@@ -116,11 +133,12 @@ function DemoAssistantScreen() {
           <View style={{ flex: 1 }}>
             <Title small>Here for the everyday</Title>
             <Body muted>
-              Local mock assistant. Not a substitute for a doctor.
+              Voice & text care assistant. Not a substitute for a doctor.
             </Body>
           </View>
         </View>
       </Card>
+
       {messages.map((m, i) => (
         <View
           key={i}
@@ -180,6 +198,7 @@ function DemoAssistantScreen() {
           <Chip key={t} title={t} onPress={() => send(t)} />
         ))}
       </View>
+
       <Field
         label="Message Bloom"
         value={text}
@@ -190,6 +209,7 @@ function DemoAssistantScreen() {
           onSubmitEditing: () => send(text),
         }}
       />
+
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
           <Button
@@ -201,11 +221,11 @@ function DemoAssistantScreen() {
         </View>
         <VoicePoweredOrb size={52} bg="#F6F8FA" onPress={() => setVoice(true)} />
       </View>
-      <VoiceOrbModal
+
+      <VoiceModal
         visible={voice}
         onClose={() => setVoice(false)}
-        onCommand={(cmd) => send(cmd)}
-        language={state.profile.language}
+        defaultLanguage={(state.profile?.language as any) || "en-IN"}
       />
       <Title small>Take the next step</Title>
       <View style={styles.wrap}>

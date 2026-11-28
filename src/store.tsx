@@ -31,6 +31,14 @@ export type CloudControls = {
     download: (id: string) => Promise<string>;
   };
   reminders: import("./cloud-reminders").CloudReminderControls;
+  voice?: {
+    status: () => Promise<{ sttAvailable: boolean; ttsAvailable: boolean }>;
+    sttToken: () => Promise<{ accessToken: string; expiresIn: number }>;
+    synthesizeTts: (
+      language: import("./voice-types").VoiceLanguage,
+      signal?: AbortSignal,
+    ) => Promise<ArrayBuffer>;
+  };
   status: string;
   recordsAccessible: boolean;
   error: string;

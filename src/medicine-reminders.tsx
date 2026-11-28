@@ -244,13 +244,17 @@ export function MedicineReminderProvider({
     });
     const inExpoGo =
       isRunningInExpoGo() || Constants.executionEnvironment === "storeClient";
-    const tokenListener =
-      Platform.OS !== "web" && !inExpoGo
-        ? Notifications.addPushTokenListener(() => {
-            pushToken.current = "";
-            setRefresh((value) => value + 1);
-          })
-        : null;
+    let tokenListener: { remove: () => void } | null = null;
+    if (Platform.OS !== "web" && !inExpoGo) {
+      try {
+        tokenListener = Notifications.addPushTokenListener(() => {
+          pushToken.current = "";
+          setRefresh((value) => value + 1);
+        });
+      } catch {
+        // Guard against platforms where push token listener is unavailable
+      }
+    }
     const timer = setInterval(() => {
       if (cloudRef.current && AppState.currentState === "active")
         setRefresh((v) => v + 1);

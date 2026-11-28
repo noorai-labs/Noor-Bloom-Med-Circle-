@@ -991,6 +991,10 @@ async function main() {
   await require("./calls-cloud-test.cjs")({ db, request, mediaRooms });
   await require("./provider-cloud-test.cjs")({ db, request, mf });
   await require("./workspace-cloud-test.cjs")({ db, request });
+  await require("./voice-cloud-test.cjs").runUnconfiguredVoiceChecks({
+    request,
+    mf,
+  });
   const remindersPath = "/v1/reminders?space=" + space;
   const devicePath = "/v1/reminders/device?space=" + space;
   const settings = { enabled: true, showNames: false, medicines: {} };
