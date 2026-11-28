@@ -177,20 +177,20 @@ async function runStandalone() {
     assert.equal(tokenJson.expiresIn, 60);
     assert.equal(deepgramGrantCalls, 1);
 
-    // Reject even short patient-specific text before contacting Cartesia.
-    const emptyTts = await mf.dispatchFetch("http://test/v1/voice/tts", {
-      method: "POST",
-      headers: authHeaders("patient_1"),
-      body: JSON.stringify({ transcript: "Patient medication 10 mg", language: "hi-IN" }),
-    });
-    assert.equal(emptyTts.status, 400);
-
-    const longTts = await mf.dispatchFetch("http://test/v1/voice/tts", {
-      method: "POST",
-      headers: authHeaders("patient_1"),
-      body: JSON.stringify({ transcript: "Patient record summary", language: "hi-IN" }),
-    });
-    assert.equal(longTts.status, 400);
+    // The Worker must reject patient-specific text without calling Cartesia.
+    for (const transcript of [
+      "Synthetic patient medication 10 mg",
+      "Synthetic patient record summary",
+      "Synthetic patient consultation note",
+    ]) {
+      const blocked = await mf.dispatchFetch("http://test/v1/voice/tts", {
+        method: "POST",
+        headers: authHeaders("patient_1"),
+        body: JSON.stringify({ transcript, language: "hi-IN" }),
+      });
+      assert.equal(blocked.status, 400);
+    }
+    assert.equal(cartesiaCalls, 0);
 
     // Valid TTS proxies MP3 audio bytes with correct model/version
     const ttsRes = await mf.dispatchFetch("http://test/v1/voice/tts", {

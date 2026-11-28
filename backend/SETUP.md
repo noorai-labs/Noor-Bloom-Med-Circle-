@@ -110,3 +110,11 @@ Local verification: `npm test`, `npm run typecheck`, `npm run lint`, `npm run ty
 ## Live reminder deployment — 25 October 2026
 
 User-approved migrations 0002_records.sql and 0003_reminders.sql were applied successfully to the existing bloom-med D1 database. The existing bloom-med-api Worker was deployed with the REMINDERS Durable Object binding; version d845a004-d0ac-43ef-a117-975dbd21db48. Health returned HTTP 200, and unauthenticated state/reminder requests returned HTTP 401. Wrangler confirms no pending migrations. Live authenticated reminder delivery has not yet been tested. Firebase FCM/EAS credentials, a configured client build and a physical-device push test remain necessary.
+
+## Voice help prototype
+
+Store `DEEPGRAM_API_KEY` and `CARTESIA_API_KEY` as secrets on the development Worker. Keep both keys out of Expo public variables. The authenticated Worker issues short-lived Deepgram session tokens and calls Cartesia server-side.
+
+The TTS endpoint accepts only a language and sends a fixed on-screen help prompt to Cartesia. Patient-specific record, medicine, and consultation text stays on screen. Live speech recognition streams microphone audio to Deepgram. Use scripted, non-sensitive audio for prototype validation and keep provider use subject to the approved privacy and language scope.
+
+Run `npm run test:cloud` to verify authenticated access, server-side credentials, rejection of patient-specific TTS payloads, and the exact generic transcript sent to Cartesia. With provider secrets unset, verify that text controls and the unavailable state remain accessible.
