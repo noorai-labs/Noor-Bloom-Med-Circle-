@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [dev]
   push:
-    branches: [dev]
+    branches: [dev, ci/apply-postgres-dev]
   workflow_dispatch:
 
 permissions:
@@ -33,9 +33,14 @@ jobs:
           done
           docker exec bloom-postgres psql -X -U postgres -d bloom_med_test \
             --set=validation_schema=bloom_validation --file=/sql/validate.sql
+          checksum="$(sha256sum backend/postgres/schema.sql | cut -d ' ' -f 1)"
+          for attempt in 1 2; do
+            docker exec bloom-postgres psql -X -U postgres -d bloom_med_test \
+              --set="schema_checksum=$checksum" --file=/sql/apply.sql
+          done
 
   validate-hosted-dev:
-    if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+    if: (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/ci/apply-postgres-dev') && github.event_name != 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -55,3 +60,28 @@ jobs:
             exit 0
           fi
           psql -X --dbname="$DATABASE_URL" --set="validation_schema=bloom_validation_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" --file=backend/postgres/validate.sql
+
+  apply-hosted-dev:
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/ci/apply-postgres-dev')
+    needs: validate-hosted-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dev
+    concurrency:
+      group: postgres-dev-schema-apply
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Commit the development schema
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PGCONNECT_TIMEOUT: 10
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Hosted apply skipped. Set DATABASE_URL in the dev environment." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          checksum="$(sha256sum backend/postgres/schema.sql | cut -d ' ' -f 1)"
+          psql -X --dbname="$DATABASE_URL" --set="schema_checksum=$checksum" --file=backend/postgres/apply.sql
