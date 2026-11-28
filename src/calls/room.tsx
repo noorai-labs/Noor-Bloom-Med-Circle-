@@ -4,7 +4,7 @@ export default function UnsupportedRoom() {
   return (
     <Card>
       <Body>
-        Use the installed BLOOM MED mobile app for encrypted consultations.
+        Use the installed MedBloom mobile app for encrypted consultations.
       </Body>
     </Card>
   );

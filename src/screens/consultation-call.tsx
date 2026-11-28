@@ -89,7 +89,7 @@ export default function ConsultationCall() {
           </Body>
           {unsupported ? (
             <Body>
-              Install the latest BLOOM MED APK to use encrypted calls. Expo Go
+              Install the latest MedBloom APK to use encrypted calls. Expo Go
               and the browser preview do not support this call screen.
             </Body>
           ) : !cloud ? (

@@ -58,10 +58,10 @@ export function buildReminderPlan(
           "A medicine has an invalid reminder time. Edit its alert times.",
         );
       const [hour, minute] = time.split(":").map(Number);
-      const title = "BLOOM MED medicine reminder";
+      const title = "MedBloom medicine reminder";
       const body = prefs.showNames
         ? "Time for " + medicine.name + ". Follow your prescribed instructions."
-        : "It is time for your scheduled medicine. Open BLOOM MED to view your routine.";
+        : "It is time for your scheduled medicine. Open MedBloom to view your routine.";
       plan.push({
         identifier:
           "bloom-med:" +
@@ -82,7 +82,7 @@ export function buildReminderPlan(
   }
   if (plan.length > 48)
     throw new Error(
-      "This phone supports up to 48 BLOOM MED daily alerts. Reduce the number of alert times.",
+      "This phone supports up to 48 MedBloom daily alerts. Reduce the number of alert times.",
     );
   return plan;
 }

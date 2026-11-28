@@ -1,7 +1,15 @@
 import { cloudMode } from "../cloud-config";
-import { doctors, nurses, providers, providerFor } from "../provider-display";
+import type { AvailabilityDay } from "../cloud-api";
+import {
+  cacheCloudProviders,
+  doctors,
+  findProvider,
+  nurses,
+  providerFor,
+  type DisplayProvider,
+} from "../provider-display";
 import { DoctorAppointments } from "./doctor";
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useClinic } from "../store";
@@ -29,28 +37,223 @@ import {
   Label,
   Screen,
   Section,
+  Skeleton,
   styles,
   theme,
   Title,
   Touch,
 } from "../components";
 import { VisitCard } from "./home";
+function JustifiedFilterRow({
+  items,
+  value,
+  onChange,
+}: {
+  items: { label: string; flex?: number }[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <View style={{ flexDirection: "row", gap: 8 }}>
+      {items.map((item) => {
+        const active = value === item.label;
+        return (
+          <Touch
+            key={item.label}
+            label={item.label}
+            selected={active}
+            onPress={() => onChange(item.label)}
+            style={{
+              flex: item.flex ?? 1,
+              paddingVertical: 10,
+              paddingHorizontal: 6,
+              borderRadius: 14,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: active ? theme.green : "white",
+              borderWidth: 1,
+              borderColor: active ? theme.green : theme.border,
+            }}
+          >
+            <Text
+              numberOfLines={1}
+              style={{
+                fontSize: 12,
+                fontWeight: "600",
+                color: active ? "white" : theme.ink,
+                textAlign: "center",
+              }}
+            >
+              {item.label}
+            </Text>
+          </Touch>
+        );
+      })}
+    </View>
+  );
+}
+
 export function DiscoverScreen() {
   const { kind } = useLocalSearchParams<{ kind?: string }>();
-  const { state } = useClinic();
+  const { state, cloud } = useClinic();
   const [mode, setMode] = useState(
     kind === "nurse" ? "Home nursing" : "Doctors",
   );
   const [search, setSearch] = useState("");
   const [specialty, setSpecialty] = useState("All");
-  const list = (mode === "Doctors" ? doctors : nurses).filter(
-    (p) =>
-      state.approved.includes(p.id) &&
-      (specialty === "All" || p.specialty === specialty) &&
+  const [language, setLanguage] = useState("All");
+  const [consultMode, setConsultMode] = useState("All");
+  const [cloudList, setCloudList] = useState<DisplayProvider[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [reloadTicket, setReloadTicket] = useState(0);
+
+  const specialtyRows =
+    mode === "Doctors"
+      ? [
+          [
+            { label: "All", flex: 0.55 },
+            { label: "General Medicine", flex: 1.35 },
+            { label: "Cardiology", flex: 1 },
+          ],
+          [
+            { label: "Pediatrics", flex: 1 },
+            { label: "Diabetology", flex: 1 },
+            { label: "Geriatrics", flex: 1 },
+          ],
+        ]
+      : [
+          [
+            { label: "All", flex: 0.6 },
+            { label: "Nursing Care", flex: 1.1 },
+            { label: "Palliative Care", flex: 1.1 },
+          ],
+          [
+            { label: "Post-operative Care", flex: 1.35 },
+            { label: "Elder Support", flex: 1 },
+          ],
+        ];
+
+  const loadAllCloudProviders = useCallback(
+    async (signal?: { active: boolean }) => {
+      if (!cloudMode || !cloud) return [];
+      const baseQuery = {
+        kind: (mode === "Doctors" ? "Doctor" : "Nurse") as "Doctor" | "Nurse",
+        specialty: specialty === "All" ? undefined : specialty,
+        language: language === "All" ? undefined : language,
+        mode: (consultMode === "Home Visit"
+          ? "in-person"
+          : consultMode === "Online Consultation"
+            ? "video"
+            : "all") as "in-person" | "video" | "all",
+        limit: 50,
+      };
+      const all: Parameters<typeof cacheCloudProviders>[0] = [];
+      let offset = 0;
+      for (let page = 0; page < 20; page++) {
+        const response = await cloud.providers({ ...baseQuery, offset });
+        if (signal && !signal.active) return all;
+        all.push(...response.providers);
+        if (!response.pagination?.hasMore || response.providers.length === 0) {
+          break;
+        }
+        offset += response.providers.length;
+      }
+      return all;
+    },
+    [cloud, mode, specialty, language, consultMode],
+  );
+
+  const fetchProviders = useCallback(async () => {
+    if (!cloudMode || !cloud) return;
+    setLoading(true);
+    setLoadError("");
+    try {
+      const providersList = await loadAllCloudProviders();
+      setCloudList(cacheCloudProviders(providersList));
+    } catch (e) {
+      setCloudList([]);
+      setLoadError(
+        e instanceof Error
+          ? e.message
+          : "Couldn't load care professionals. Please try again.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [cloud, loadAllCloudProviders]);
+
+  useEffect(() => {
+    if (!cloudMode || !cloud) return;
+    const signal = { active: true };
+    void (async () => {
+      await Promise.resolve();
+      if (!signal.active) return;
+      setLoading(true);
+      setLoadError("");
+      try {
+        const providersList = await loadAllCloudProviders(signal);
+        if (!signal.active) return;
+        setCloudList(cacheCloudProviders(providersList));
+      } catch (e) {
+        if (!signal.active) return;
+        setCloudList([]);
+        setLoadError(
+          e instanceof Error
+            ? e.message
+            : "Couldn't load care professionals. Please try again.",
+        );
+      } finally {
+        if (signal.active) setLoading(false);
+      }
+    })();
+    return () => {
+      signal.active = false;
+    };
+  }, [cloud, loadAllCloudProviders, reloadTicket]);
+
+  const rawList: DisplayProvider[] = cloudMode
+    ? cloudList
+    : mode === "Doctors"
+      ? doctors
+      : nurses;
+
+  const list = rawList.filter((p) => {
+    const isApproved = cloudMode ? p.verified !== false : state.approved.includes(p.id);
+    const matchesSpecialty =
+      specialty === "All" ||
+      p.specialty.toLowerCase().includes(specialty.toLowerCase());
+    const matchesSearch =
       (p.name + " " + p.specialty + " " + p.skills)
         .toLowerCase()
-        .includes(search.toLowerCase()),
-  );
+        .includes(search.toLowerCase());
+
+    const providerLanguages = p.languages?.length
+      ? p.languages
+      : ["English", "Hindi", "Kannada", "Tamil"];
+    const matchesLanguage =
+      language === "All" ||
+      providerLanguages.some((l) => l.toLowerCase() === language.toLowerCase());
+
+    const matchesConsultMode =
+      consultMode === "All" ||
+      (p.modes?.length
+        ? consultMode === "Home Visit"
+          ? p.modes.includes("in-person")
+          : p.modes.includes("video")
+        : (consultMode === "Home Visit" &&
+            !p.specialty.includes("Telehealth Only")) ||
+          (consultMode === "Online Consultation" && !nursing(p.id)));
+
+    return (
+      isApproved &&
+      matchesSpecialty &&
+      matchesSearch &&
+      matchesLanguage &&
+      matchesConsultMode
+    );
+  });
+
   return (
     <Screen
       title="Find your kind of care"
@@ -58,8 +261,8 @@ export function DiscoverScreen() {
       back
       allowed={["Patient", "Family"]}
     >
-      <Chips
-        values={["Doctors", "Home nursing"]}
+      <JustifiedFilterRow
+        items={[{ label: "Doctors" }, { label: "Home nursing" }]}
         value={mode}
         onChange={(v) => {
           setMode(v);
@@ -72,60 +275,161 @@ export function DiscoverScreen() {
         onChange={setSearch}
         placeholder="Name, specialty or care skill"
       />
-      {mode === "Doctors" && (
-        <Chips
-          values={["All", ...doctors.map((p) => p.specialty)]}
-          value={specialty}
-          onChange={setSpecialty}
+
+      <View style={{ gap: 8 }}>
+        <Label>SPECIALTY</Label>
+        {specialtyRows.map((row, idx) => (
+          <JustifiedFilterRow
+            key={idx}
+            items={row}
+            value={specialty}
+            onChange={setSpecialty}
+          />
+        ))}
+      </View>
+
+      <View style={{ gap: 8 }}>
+        <Label>SPOKEN LANGUAGE</Label>
+        <JustifiedFilterRow
+          items={[
+            { label: "All", flex: 0.65 },
+            { label: "English", flex: 1 },
+            { label: "Hindi", flex: 0.85 },
+            { label: "Kannada", flex: 1.1 },
+            { label: "Tamil", flex: 0.85 },
+          ]}
+          value={language}
+          onChange={setLanguage}
+        />
+      </View>
+
+      <View style={{ gap: 8 }}>
+        <Label>CONSULTATION MODE</Label>
+        <JustifiedFilterRow
+          items={[
+            { label: "All", flex: 0.6 },
+            { label: "Home Visit", flex: 1 },
+            { label: "Online Consultation", flex: 1.45 },
+          ]}
+          value={consultMode}
+          onChange={setConsultMode}
+        />
+      </View>
+
+      {!loading && !loadError && (
+        <Body muted>
+          {cloudMode
+            ? list.length + " verified professional(s) available"
+            : list.length + " verified professional(s) match your care criteria"}
+        </Body>
+      )}
+
+      {loading && (
+        <View style={{ gap: 12 }}>
+          {[0, 1, 2].map((idx) => (
+            <Card key={idx} style={{ gap: 10 }}>
+              <View style={styles.row}>
+                <Skeleton width={64} height={64} borderRadius={32} />
+                <View style={{ flex: 1, gap: 8 }}>
+                  <Skeleton width="65%" height={16} />
+                  <Skeleton width="45%" height={12} />
+                  <Skeleton width="55%" height={12} />
+                </View>
+              </View>
+              <Skeleton width="90%" height={12} />
+            </Card>
+          ))}
+        </View>
+      )}
+
+      {!loading && !!loadError && (
+        <Empty
+          title="Couldn't load care professionals"
+          body={loadError}
+          icon="cloud-offline-outline"
+          action="Retry"
+          onPress={() => {
+            setReloadTicket((t) => t + 1);
+            void fetchProviders();
+          }}
         />
       )}
-      <Body muted>
-        {cloudMode
-          ? "Only verified professionals will appear here."
-          : list.length + " professionals available in this demo"}
-      </Body>
-      {list.map((p) => (
-        <Touch
-          key={p.id}
-          label={"View " + p.name}
-          onPress={() =>
-            router.push({
-              pathname: "/professional/[id]",
-              params: { id: p.id },
-            })
-          }
-        >
-          <Card>
-            <View style={styles.row}>
-              <Avatar providerId={p.id} size={64} />
-              <View style={{ flex: 1 }}>
-                <Title small>{p.name}</Title>
-                <Body muted>{p.specialty}</Body>
-                <Text style={{ color: "#A18142", fontSize: 12, marginTop: 4 }}>
-                  ★ {p.rating} · {p.experience} years experience
-                </Text>
+
+      {!loading &&
+        !loadError &&
+        list.map((p) => (
+          <Touch
+            key={p.id}
+            label={"View " + p.name}
+            onPress={() =>
+              router.push({
+                pathname: "/professional/[id]",
+                params: { id: p.id },
+              })
+            }
+          >
+            <Card>
+              <View style={styles.row}>
+                <Avatar providerId={p.id} size={64} />
+                <View style={{ flex: 1 }}>
+                  <View style={styles.row}>
+                    <Title small>{p.name}</Title>
+                    <Chip title="Verified" />
+                  </View>
+                  <Body muted>{p.specialty}</Body>
+                  <Text style={{ color: "#A18142", fontSize: 12, marginTop: 4 }}>
+                    {p.experience > 0
+                      ? `★ ${p.rating} · ${p.experience} years experience`
+                      : p.authority || "Verified care provider"}
+                  </Text>
+                </View>
+                <Icon name="chevron-forward" size={18} />
               </View>
-              <Icon name="chevron-forward" size={18} />
-            </View>
-            <Body muted>{p.skills}</Body>
-            <View style={[styles.row, { justifyContent: "space-between" }]}>
-              <Chip title="Available for home care" />
-              <Text style={{ color: theme.ink, fontWeight: "700" }}>
-                ₹{p.fee}
-                <Text style={{ color: theme.muted, fontWeight: "400" }}>
-                  {" "}
-                  / visit
-                </Text>
-              </Text>
-            </View>
-          </Card>
-        </Touch>
-      ))}
-      {list.length === 0 && (
+              <Body muted>{p.skills || p.about}</Body>
+              <View style={[styles.row, { justifyContent: "space-between" }]}>
+                <Chip
+                  title={
+                    p.modes?.length
+                      ? p.modes
+                          .map((m) => (m === "video" ? "Video" : "Home visit"))
+                          .join(" & ")
+                      : nursing(p.id)
+                        ? "Home visit"
+                        : "Home visit & Video"
+                  }
+                />
+                {p.fee > 0 ? (
+                  <Text style={{ color: theme.ink, fontWeight: "700" }}>
+                    ₹{p.fee}
+                    <Text style={{ color: theme.muted, fontWeight: "400" }}>
+                      {" "}
+                      / visit
+                    </Text>
+                  </Text>
+                ) : (
+                  <Chip title="Verified profile" />
+                )}
+              </View>
+            </Card>
+          </Touch>
+        ))}
+
+      {!loading && !loadError && list.length === 0 && (
         <Empty
-          title="No matches yet"
-          body="Try another name, skill or specialty."
+          title="No doctors match your filters"
+          body="No care professionals matched your search criteria. Clear filters or try another specialty, language, or mode."
           icon="search-outline"
+          action={
+            search || specialty !== "All" || language !== "All" || consultMode !== "All"
+              ? "Clear filters"
+              : undefined
+          }
+          onPress={() => {
+            setSearch("");
+            setSpecialty("All");
+            setLanguage("All");
+            setConsultMode("All");
+          }}
         />
       )}
     </Screen>
@@ -133,7 +437,7 @@ export function DiscoverScreen() {
 }
 export function ProfessionalScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const p = providers.find((item) => item.id === id);
+  const p = findProvider(id);
   const { state } = useClinic();
   if (!p)
     return (
@@ -181,29 +485,53 @@ export function ProfessionalScreen() {
         </View>
         <View style={styles.row}>
           <Icon name="shield-checkmark-outline" />
-          <Body>Approved professional in this local demo</Body>
+          <Body>
+            {p.authority
+              ? `Verified by MedBloom · ${p.authority}${p.registrationNumber ? ` · Reg ${p.registrationNumber}` : ""}`
+              : "Verified by MedBloom · Credentials checked"}
+          </Body>
+        </View>
+        <View style={styles.row}>
+          <Icon name="chatbubble-ellipses-outline" />
+          <Body>
+            Languages:{" "}
+            {p.languages?.length
+              ? p.languages.join(", ")
+              : "English, Hindi, Kannada"}
+          </Body>
         </View>
       </Card>
       <Card>
         <View style={[styles.row, { justifyContent: "space-between" }]}>
           <View>
-            <Label>DEMO VISIT ESTIMATE</Label>
-            <Title>₹{p.fee}</Title>
+            <Label>CONSULTATION ESTIMATE</Label>
+            <Title>{p.fee > 0 ? `₹${p.fee}` : "Confirmed on booking"}</Title>
           </View>
           <Chip title="No payment required" />
         </View>
         <Button
-          title="Choose a care moment"
-          disabled={!state.approved.includes(p.id)}
+          title="Request consultation appointment"
+          disabled={!p.verified && !state.approved.includes(p.id)}
           onPress={() =>
             router.push({ pathname: "/booking", params: { providerId: p.id } })
           }
-          icon="arrow-forward"
+          icon="calendar-outline"
         />
       </Card>
     </Screen>
   );
 }
+function to24Hour(slot: string): string {
+  const m = /^(\d{1,2}):(\d{2}) (AM|PM)$/.exec(slot);
+  if (!m) return "";
+  let hour = Number(m[1]);
+  if (m[3] === "PM" && hour < 12) hour += 12;
+  if (m[3] === "AM" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${m[2]}`;
+}
+
+const WEEKDAY_KEYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
 export function DateTime({
   providerId,
   date,
@@ -211,6 +539,7 @@ export function DateTime({
   time,
   setTime,
   ignoreId,
+  onLoadingChange,
 }: {
   providerId: string;
   date: string;
@@ -218,8 +547,80 @@ export function DateTime({
   time: string;
   setTime: (t: string) => void;
   ignoreId?: string;
+  onLoadingChange?: (loading: boolean) => void;
 }) {
-  const { state } = useClinic();
+  const { state, cloud } = useClinic();
+  const isStaticProvider =
+    doctors.some((p) => p.id === providerId) ||
+    nurses.some((p) => p.id === providerId);
+  const [providerSchedule, setProviderSchedule] = useState<
+    AvailabilityDay[] | null
+  >(null);
+  const [scheduleError, setScheduleError] = useState(false);
+  const [scheduleLoading, setScheduleLoading] = useState(
+    cloudMode && !!cloud && !!providerId && !isStaticProvider,
+  );
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      await Promise.resolve();
+      if (!active) return;
+      if (!cloudMode || !cloud || !providerId || isStaticProvider) {
+        setScheduleError(false);
+        setScheduleLoading(false);
+        onLoadingChange?.(false);
+        return;
+      }
+      setScheduleError(false);
+      setScheduleLoading(true);
+      onLoadingChange?.(true);
+      try {
+        const res = await cloud.availability.get(providerId);
+        if (active) setProviderSchedule(res.schedule);
+      } catch {
+        if (active) {
+          setProviderSchedule(null);
+          setScheduleError(true);
+        }
+      } finally {
+        if (active) {
+          setScheduleLoading(false);
+          onLoadingChange?.(false);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [cloud, isStaticProvider, onLoadingChange, providerId]);
+
+  const weekdayKey = WEEKDAY_KEYS[new Date(date + "T12:00:00").getDay()];
+  const dayRule =
+    providerSchedule && providerSchedule.length > 0
+      ? providerSchedule.find((d) => d.day === weekdayKey)
+      : undefined;
+
+  const availableTimes =
+    !cloudMode || isStaticProvider
+      ? times
+      : scheduleError || !providerSchedule || providerSchedule.length === 0
+        ? []
+        : !dayRule || !dayRule.enabled
+          ? []
+          : times.filter((slot) => {
+              const hhmm = to24Hour(slot);
+              return hhmm >= dayRule.startTime && hhmm < dayRule.endTime;
+            });
+
+  const timeStillValid = !time || availableTimes.includes(time);
+
+  useEffect(() => {
+    if (!scheduleLoading && !timeStillValid) {
+      setTime("");
+    }
+  }, [scheduleLoading, setTime, timeStillValid]);
+
   return (
     <>
       <Label>CHOOSE A DAY</Label>
@@ -280,8 +681,17 @@ export function DateTime({
         })}
       </ScrollView>
       <Label>CHOOSE A TIME</Label>
-      <View style={styles.wrap}>
-        {times.map((t) => {
+      {scheduleLoading ? (
+        <Body muted>Loading available times…</Body>
+      ) : availableTimes.length === 0 ? (
+        <Body muted>
+          {scheduleError
+            ? "Could not load doctor's availability. Please try again later."
+            : "Doctor is not available on this day. Please select another day."}
+        </Body>
+      ) : (
+        <View style={styles.wrap}>
+          {availableTimes.map((t) => {
           const busy = state.visits.some(
             (v) =>
               v.id !== ignoreId &&
@@ -315,17 +725,35 @@ export function DateTime({
             </Touch>
           );
         })}
-      </View>
+        </View>
+      )}
     </>
   );
 }
 export function BookingScreen() {
   const params = useLocalSearchParams<{ providerId: string; date?: string }>();
-  const { state, dispatch, notify } = useClinic();
-  const p = providers.find((v) => v.id === params.providerId);
+  const { state, cloud, dispatch, notify } = useClinic();
+  const p = findProvider(params.providerId);
+  const isNurse = p?.kind === "Nurse" || nursing(params.providerId || "");
+  const hasPendingWithProvider = state.visits.some(
+    (v) => v.providerId === params.providerId && v.status === "Requested",
+  );
   const [step, setStep] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [confirmedVisit, setConfirmedVisit] = useState<
+    (typeof state.visits)[number] | null
+  >(null);
+  const preSubmitIdsRef = useRef<Set<string>>(new Set());
+  const submittedSlotRef = useRef<{
+    providerId: string;
+    date: string;
+    time: string;
+  } | null>(null);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
   const [service, setService] = useState(
-    nursing(params.providerId || "") ? "Home nursing" : "Home Visit",
+    isNurse ? "Home nursing" : "Home Visit",
   );
   const [frequency, setFrequency] = useState("One visit");
   const [date, setDate] = useState(
@@ -334,6 +762,54 @@ export function BookingScreen() {
   const [time, setTime] = useState("");
   const [address, setAddress] = useState(state.profile.address);
   const [reason, setReason] = useState("");
+
+  useEffect(() => {
+    if (!awaitingConfirm || !p) return;
+    if (cloud?.status === "Save failed") {
+      const msg =
+        cloud.error ||
+        "Could not send care request. Please review your date and time.";
+      const timer = setTimeout(() => {
+        setAwaitingConfirm(false);
+        setSubmitting(false);
+        setSubmitError(msg);
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+    if (!cloud || cloud.status === "Synced") {
+      const target = submittedSlotRef.current || {
+        providerId: p.id,
+        date,
+        time,
+      };
+      const matched =
+        state.visits.find(
+          (v) =>
+            !preSubmitIdsRef.current.has(v.id) &&
+            v.providerId === target.providerId &&
+            v.date === target.date &&
+            v.time === target.time &&
+            !terminal(v),
+        ) ||
+        state.visits.find(
+          (v) =>
+            v.providerId === target.providerId &&
+            v.date === target.date &&
+            v.time === target.time &&
+            !terminal(v),
+        );
+      if (matched) {
+        const timer = setTimeout(() => {
+          setConfirmedVisit(matched);
+          setAwaitingConfirm(false);
+          setSubmitting(false);
+          setSubmitError("");
+          setStep(3);
+        }, 0);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [awaitingConfirm, cloud, date, p, state.visits, time]);
   if (!p)
     return (
       <Screen title="Book care" back>
@@ -345,8 +821,8 @@ export function BookingScreen() {
         />
       </Screen>
     );
-  if (step === 3) {
-    const visit = state.visits.at(-1)!;
+  if (step === 3 && confirmedVisit) {
+    const visit = confirmedVisit;
     return (
       <Screen title="A little peace of mind" allowed={["Patient", "Family"]}>
         <Card style={{ alignItems: "center", paddingVertical: 35 }}>
@@ -360,12 +836,12 @@ export function BookingScreen() {
           </View>
           <Title>
             {visit.status === "Requested"
-              ? "Your request is in."
+              ? "Care request sent"
               : "You’re all booked."}
           </Title>
           <Body muted>
             {visit.status === "Requested"
-              ? "Your care professional can confirm this request from their care queue."
+              ? `${p.name} will review your request. The slot is not confirmed until accepted.`
               : "Your care professional will see this in their visit calendar."}
           </Body>
           <Avatar providerId={p.id} />
@@ -437,14 +913,14 @@ export function BookingScreen() {
           <Title small>How can we care for you?</Title>
           <Chips
             values={
-              nursing(p.id)
+              isNurse
                 ? ["Home nursing", "Elder care", "Post-operative care"]
                 : ["Home Visit", "Online Consultation"]
             }
             value={service}
             onChange={setService}
           />
-          {nursing(p.id) && (
+          {isNurse && (
             <>
               <Label>Visit duration / frequency</Label>
               <Chips
@@ -483,6 +959,7 @@ export function BookingScreen() {
             setDate={setDate}
             time={time}
             setTime={setTime}
+            onLoadingChange={setScheduleLoading}
           />
           {service !== "Online Consultation" && (
             <Field
@@ -495,7 +972,9 @@ export function BookingScreen() {
           <Button
             title="Review appointment"
             disabled={
-              !time || (service !== "Online Consultation" && !address.trim())
+              scheduleLoading ||
+              !time ||
+              (service !== "Online Consultation" && !address.trim())
             }
             onPress={() => setStep(2)}
           />
@@ -526,33 +1005,82 @@ export function BookingScreen() {
             </View>
           ))}
           <View style={styles.divider} />
+          {hasPendingWithProvider && (
+            <View
+              style={{
+                backgroundColor: "#FFFBEB",
+                borderColor: "#FDE68A",
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 10,
+              }}
+            >
+              <Body style={{ fontSize: 12, color: "#B45309" }}>
+                You already have a pending request with {p.name}. Sending this
+                creates an additional request.
+              </Body>
+            </View>
+          )}
           <Body>
-            Estimate: ₹{p.fee} per visit. No payment is collected. Recurring
-            care is represented as a single request with the chosen frequency.
+            {p.name} will review your request before confirming. No payment is
+            collected.
           </Body>
+          <Body muted style={{ fontSize: 12 }}>
+            For emergencies, use SOS or call 112.
+          </Body>
+          {submitError ? (
+            <View
+              style={{
+                backgroundColor: "#FEF2F2",
+                borderColor: "#FECACA",
+                borderWidth: 1,
+                borderRadius: 12,
+                padding: 12,
+              }}
+            >
+              <Body style={{ color: "#991B1B", fontSize: 13 }}>
+                {submitError}
+              </Body>
+            </View>
+          ) : null}
           <Button
-            title="Confirm appointment"
+            title="Confirm care request"
+            loading={submitting}
+            disabled={submitting}
             onPress={() => {
-              if (
-                dispatch({
-                  type: "book",
-                  visit: {
-                    providerId: p.id,
-                    date,
-                    time,
-                    service,
-                    frequency,
-                    address,
-                    reason,
-                  },
-                })
-              )
-                setStep(3);
+              if (submitting) return;
+              setSubmitError("");
+              setSubmitting(true);
+              preSubmitIdsRef.current = new Set(state.visits.map((v) => v.id));
+              submittedSlotRef.current = { providerId: p.id, date, time };
+              const ok = dispatch({
+                type: "book",
+                visit: {
+                  providerId: p.id,
+                  providerName: p.name,
+                  date,
+                  time,
+                  service,
+                  frequency,
+                  address,
+                  reason,
+                },
+              });
+              if (ok) {
+                setAwaitingConfirm(true);
+              } else {
+                setSubmitting(false);
+                setSubmitError(
+                  cloud?.error ||
+                    "Could not submit care request. Please review your details and try again.",
+                );
+              }
             }}
           />
           <Button
             title="Edit date & address"
             secondary
+            disabled={submitting}
             onPress={() => setStep(1)}
           />
         </Card>
@@ -590,11 +1118,62 @@ function GeneralAppointmentsScreen() {
       }
       subtitle="Every care moment, in one place."
     >
-      <Chips
-        values={["Upcoming", "Completed", "Cancelled", "All"]}
-        value={filter}
-        onChange={setFilter}
-      />
+      {isPatientOrFamily && (hasHistory || list.length > 0) && (
+        <Card
+          style={{
+            backgroundColor: "#F2F9F5",
+            borderColor: "#D2E9DC",
+            padding: 14,
+            gap: 8,
+          }}
+        >
+          <Button
+            title="Book another care moment"
+            icon="add-circle-outline"
+            onPress={() => router.push("/discover")}
+            style={{ minHeight: 48 }}
+          />
+          <Body muted style={{ fontSize: 12, textAlign: "center" }}>
+            Find verified doctors or home nursing care
+          </Body>
+        </Card>
+      )}
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        {["Upcoming", "Completed", "Cancelled", "All"].map((item) => {
+          const active = filter === item;
+          return (
+            <Touch
+              key={item}
+              label={item}
+              selected={active}
+              onPress={() => setFilter(item)}
+              style={{
+                flex: item === "All" ? 0.65 : 1,
+                paddingVertical: 9,
+                paddingHorizontal: 6,
+                borderRadius: 14,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: active ? theme.green : "white",
+                borderWidth: 1,
+                borderColor: active ? theme.green : theme.border,
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                style={{
+                  fontSize: 12,
+                  fontWeight: "600",
+                  color: active ? "white" : theme.ink,
+                  textAlign: "center",
+                }}
+              >
+                {item}
+              </Text>
+            </Touch>
+          );
+        })}
+      </View>
       {list.map((v) => (
         <VisitCard key={v.id} visit={v} />
       ))}
@@ -629,13 +1208,6 @@ function GeneralAppointmentsScreen() {
               ? () => router.push("/discover")
               : undefined
           }
-        />
-      )}
-      {(list.length > 0 || hasHistory) && ["Patient", "Family"].includes(state.session?.role || "") && (
-        <Button
-          title="Book another care moment"
-          icon="add"
-          onPress={() => router.push("/discover")}
         />
       )}
     </Screen>

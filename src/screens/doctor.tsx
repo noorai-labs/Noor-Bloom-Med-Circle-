@@ -1,6 +1,6 @@
 import { doctorDashboardId } from "../care-space-ids";
 import { providers } from "../provider-display";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
@@ -18,11 +18,23 @@ import {
   Icon,
   Screen,
   Section,
+  Skeleton,
   styles,
   theme,
   Title,
   Touch,
 } from "../components";
+import {
+  fetchWorkspaces,
+  getSelectedOrganization,
+  getWorkspaceJoinRequests,
+  isDevMockAllowed,
+  submitWorkspaceJoinRequest,
+  withdrawWorkspaceJoinRequest,
+  type OrganizationWorkspace,
+  type WorkspaceJoinRequest,
+  type Organization,
+} from "../organizations";
 
 const openVisit = (id: string) =>
   router.push({ pathname: "/visit/[id]", params: { id } });
@@ -83,7 +95,17 @@ export function DoctorVisitCard({ visit }: { visit: Visit }) {
 
 export function DoctorHome() {
   const { state, cloud, notify } = useClinic();
-  const visits = visibleVisits(state);
+  const client = useRef(cloud);
+  useEffect(() => {
+    client.current = cloud;
+  }, [cloud]);
+  const dashboard = doctorDashboardId(state.session?.identifier ?? "");
+  const hasAssignedWorkspace =
+    !cloud || (state.session?.role === "Doctor" && cloud.spaceId !== dashboard);
+  const hasAnyDoctorSpace = !!cloud?.spaces.some(
+    (space) => space.role === "Doctor" && space.id !== dashboard,
+  );
+  const visits = hasAssignedWorkspace ? visibleVisits(state) : [];
   const today = visits.filter(
     (v) => v.date === dayKey() && v.status !== "Cancelled",
   );
@@ -94,15 +116,172 @@ export function DoctorHome() {
   const professional = providers.find(
     (p) => p.id === state.session?.providerId,
   );
+
+  const [workspaceQuery, setWorkspaceQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
+  const [workspaces, setWorkspaces] = useState<OrganizationWorkspace[]>([]);
+  const [wsLoading, setWsLoading] = useState(false);
+  const [wsError, setWsError] = useState("");
+  const [wsRetryTicket, setWsRetryTicket] = useState(0);
+
+  const [joinRequests, setJoinRequests] = useState<WorkspaceJoinRequest[]>([]);
+  const [reqStale, setReqStale] = useState(false);
+  const [requestingId, setRequestingId] = useState("");
+  const [withdrawingId, setWithdrawingId] = useState("");
+  const [requestError, setRequestError] = useState("");
+
+  const doctorUserId = state.session?.identifier || "doc-current";
+  const doctorName = state.profile?.name || "Doctor";
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(workspaceQuery);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [workspaceQuery]);
+
+  async function loadRequests() {
+    try {
+      const reqs = client.current
+        ? (await client.current.directory.requests()).map((request): WorkspaceJoinRequest => ({
+            ...request,
+            organizationName: "",
+            doctorUserId,
+            doctorName,
+            workspaceId: request.spaceId,
+            requestedAt: request.createdAt,
+            status: request.status === "Rejected" ? "Declined" : request.status,
+          }))
+        : await getWorkspaceJoinRequests(doctorUserId);
+      setJoinRequests(reqs);
+      setReqStale(false);
+    } catch {
+      setReqStale(true);
+    }
+  }
+
+  useEffect(() => {
+    let isCurrent = true;
+    void (async () => {
+      await Promise.resolve();
+      if (!isCurrent) return;
+      const org = await getSelectedOrganization();
+      if (isCurrent && org) setSelectedOrg(org);
+      try {
+        const reqs = client.current
+        ? (await client.current.directory.requests()).map((request): WorkspaceJoinRequest => ({
+            ...request,
+            organizationName: "",
+            doctorUserId,
+            doctorName,
+            workspaceId: request.spaceId,
+            requestedAt: request.createdAt,
+            status: request.status === "Rejected" ? "Declined" : request.status,
+          }))
+        : await getWorkspaceJoinRequests(doctorUserId);
+        if (isCurrent) {
+          setJoinRequests(reqs);
+          setReqStale(false);
+        }
+      } catch {
+        if (isCurrent) setReqStale(true);
+      }
+    })();
+    return () => {
+      isCurrent = false;
+    };
+  }, [doctorUserId, doctorName]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    void (async () => {
+      await Promise.resolve();
+      if (!isCurrent) return;
+      setWsLoading(true);
+      setWsError("");
+      try {
+        const list: OrganizationWorkspace[] = client.current
+          ? (await client.current.directory.workspaces(debouncedQuery)).map((ws) => ({
+              ...ws, id: ws.spaceId, specialty: "", department: "",
+              activePatients: 0, openCases: 0, adminName: "", description: "",
+            }))
+          : await fetchWorkspaces(selectedOrg?.id, debouncedQuery);
+        if (isCurrent) setWorkspaces(list);
+      } catch (e) {
+        if (isCurrent) {
+          setWorkspaces([]);
+          setWsError(
+            e instanceof Error
+              ? e.message
+              : "Couldn't load workspaces. Please try again.",
+          );
+        }
+      } finally {
+        if (isCurrent) setWsLoading(false);
+      }
+    })();
+    return () => {
+      isCurrent = false;
+    };
+  }, [selectedOrg?.id, debouncedQuery, wsRetryTicket]);
+
+  async function handleJoinRequest(ws: OrganizationWorkspace) {
+    if (requestingId) return;
+    setRequestingId(ws.id);
+    setRequestError("");
+    try {
+      if (cloud) {
+        await cloud.directory.join(ws.id);
+        await loadRequests();
+        notify(`Join request sent for ${ws.name}`);
+        return;
+      }
+      const created = await submitWorkspaceJoinRequest(
+        doctorUserId,
+        doctorName,
+        ws,
+        selectedOrg?.name || "MedBloom Clinic Network",
+      );
+      setJoinRequests((prev) => [
+        created,
+        ...prev.filter((r) => r.workspaceId !== ws.id),
+      ]);
+      notify(`Join request sent for ${ws.name}`);
+    } catch (e) {
+      setRequestError(
+        e instanceof Error
+          ? e.message
+          : "Could not submit join request. Please try again.",
+      );
+    } finally {
+      setRequestingId("");
+    }
+  }
+
+  async function handleWithdraw(reqId: string) {
+    if (withdrawingId) return;
+    setWithdrawingId(reqId);
+    try {
+      const updated = await withdrawWorkspaceJoinRequest(doctorUserId, reqId);
+      setJoinRequests(updated);
+      notify("Workspace request withdrawn.");
+    } catch {
+      notify("Could not withdraw request. Please try again.");
+    } finally {
+      setWithdrawingId("");
+    }
+  }
+
   return (
-    <Screen allowed={["Doctor"]}>
+    <Screen allowed={["Doctor", "Patient"]}>
       <View style={[styles.row, { justifyContent: "space-between" }]}>
         <View style={styles.row}>
           <BloomLogo size={36} />
           <Text
             style={{ fontWeight: "800", color: theme.ink, letterSpacing: 1 }}
           >
-            BLOOM MED
+            MedBloom
           </Text>
         </View>
         <Touch
@@ -129,6 +308,36 @@ export function DoctorHome() {
             })}
           </Body>
         </View>
+
+        {!hasAssignedWorkspace && (
+          <Card
+            style={{
+              backgroundColor: "#F0FDF4",
+              borderColor: "#86EFAC",
+              gap: 10,
+            }}
+          >
+            <View style={styles.row}>
+              <View style={[styles.iconBox, { backgroundColor: "#DCFCE7" }]}>
+                <Icon name="business-outline" color="#16A34A" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Title small>Approved doctor account</Title>
+                <Body muted style={{ fontSize: 13 }}>
+                  {selectedOrg?.name || "MedBloom"} · Verified
+                </Body>
+              </View>
+            </View>
+            <Body style={{ fontSize: 13 }}>
+              {hasAnyDoctorSpace
+                ? "Switch to an assigned Doctor care space in Account to view patients and consultations."
+                : isDevMockAllowed
+                  ? "No patient workspace is assigned yet. Find an organization workspace below and request to join."
+                  : "No patient workspace is assigned yet. Workspace search is not available in this build yet."}
+            </Body>
+          </Card>
+        )}
+
         <View style={[styles.row, { alignItems: "stretch" }]}>
           <Card style={{ flex: 1, backgroundColor: theme.mint }}>
             <Icon name="calendar-outline" />
@@ -143,21 +352,227 @@ export function DoctorHome() {
             <Body>Online today</Body>
           </Card>
         </View>
-        <Card style={{ backgroundColor: "#EDF5F0" }}>
+
+        <Card style={{ backgroundColor: "#EDF5F0", gap: 12 }}>
           <View style={styles.row}>
-            <Icon name="people-outline" />
+            <View style={[styles.iconBox, { backgroundColor: theme.mint }]}>
+              <Icon name="people-outline" />
+            </View>
             <View style={{ flex: 1 }}>
               <Title small>Current patient</Title>
-              <Body>{state.profile.name || "Your assigned care space"}</Body>
+              <Body muted>
+                {hasAssignedWorkspace && state.profile.name
+                  ? state.profile.name
+                  : "No patient workspace assigned yet"}
+              </Body>
             </View>
           </View>
           <Button
             title="View assigned patients"
-            secondary
+            disabled={!hasAssignedWorkspace}
             onPress={() => router.push("/(tabs)/patients")}
           />
         </Card>
       </Entrance>
+
+      {/* MY WORKSPACE REQUESTS STATUS */}
+      <Section
+        title="My requests"
+        action="Refresh"
+        onPress={() => {
+          void loadRequests();
+          if (cloud) void cloud.refresh().catch(() => setReqStale(true));
+        }}
+      />
+      {reqStale && (
+        <Body muted style={{ fontSize: 12 }}>
+          Could not reach the server. Showing last known request status.
+        </Body>
+      )}
+      {joinRequests.length === 0 ? (
+        <Card>
+          <Body muted>
+            No workspace requests yet. Search below to request access to a
+            workspace.
+          </Body>
+        </Card>
+      ) : (
+        joinRequests.map((req) => (
+          <Card key={req.id} style={{ gap: 8 }}>
+            <View style={[styles.row, { justifyContent: "space-between" }]}>
+              <View style={{ flex: 1 }}>
+                <Title small>{req.workspaceName}</Title>
+                <Body muted style={{ fontSize: 12 }}>
+                  {req.status === "Pending"
+                    ? `Waiting for admin approval · Sent ${formatDate(req.requestedAt.slice(0, 10))}`
+                    : req.status === "Approved"
+                      ? "You've joined this workspace"
+                      : req.reason || "Request declined by organization admin"}
+                </Body>
+              </View>
+              <Chip title={req.status} />
+            </View>
+            {!cloud && req.status === "Pending" && (
+              <Button
+                title="Withdraw request"
+                secondary
+                loading={withdrawingId === req.id}
+                disabled={withdrawingId === req.id}
+                onPress={() => void handleWithdraw(req.id)}
+              />
+            )}
+          </Card>
+        ))
+      )}
+
+      {/* BROWSE ORGANIZATION WORKSPACES BY NAME */}
+      <Section
+        title="Find a workspace"
+        action={selectedOrg ? selectedOrg.badge : undefined}
+      />
+      <Card style={{ gap: 12 }}>
+        <Body muted style={{ fontSize: 13 }}>
+          Browse organization workspaces by name and request to join. Patient
+          records remain hidden until an admin approves your request.
+        </Body>
+
+        <Field
+          label="Search workspaces"
+          value={workspaceQuery}
+          onChange={setWorkspaceQuery}
+          placeholder={cloud ? "Search by workspace name" : "Search by workspace name, department or specialty..."}
+        />
+
+        {!!requestError && (
+          <View
+            style={{
+              backgroundColor: "#FEF2F2",
+              borderColor: "#FECACA",
+              borderWidth: 1,
+              borderRadius: 12,
+              padding: 10,
+              gap: 8,
+            }}
+          >
+            <Text style={{ color: "#DC2626", fontSize: 13, fontWeight: "600" }}>
+              {requestError}
+            </Text>
+          </View>
+        )}
+
+        {wsLoading && (
+          <View style={{ gap: 10 }}>
+            {[0, 1].map((idx) => (
+              <Card key={idx} style={{ gap: 8 }}>
+                <Skeleton width="65%" height={15} />
+                <Skeleton width="45%" height={12} />
+                <Skeleton width="90%" height={12} />
+              </Card>
+            ))}
+          </View>
+        )}
+
+        {!wsLoading && !!wsError && (
+          <Empty
+            title="Couldn't load workspaces"
+            body={wsError}
+            icon="cloud-offline-outline"
+            action="Retry"
+            onPress={() => setWsRetryTicket((t) => t + 1)}
+          />
+        )}
+
+        {!wsLoading &&
+          !wsError &&
+          workspaces.map((ws) => {
+            const req = joinRequests.find((r) => r.workspaceId === ws.id);
+            const isPending = req?.status === "Pending";
+            const assignedSpace = cloud?.spaces.find(
+              (space) => space.id === ws.id && space.role === "Doctor",
+            );
+            const isApproved = !!assignedSpace || req?.status === "Approved";
+            const isDeclined = req?.status === "Declined";
+            return (
+              <Card
+                key={ws.id}
+                style={{
+                  backgroundColor: isApproved ? "#F0FDF4" : "white",
+                  borderColor: isApproved ? theme.green : theme.border,
+                  gap: 8,
+                }}
+              >
+                <View style={[styles.row, { justifyContent: "space-between" }]}>
+                  <View style={{ flex: 1 }}>
+                    <Title small>{ws.name}</Title>
+                    <Body muted style={{ fontSize: 12 }}>
+                      {cloud ? "Organization workspace" : `${ws.department} · ${ws.specialty}`}
+                    </Body>
+                  </View>
+                  <Chip
+                    title={
+                      isApproved
+                        ? "Joined"
+                        : isPending
+                          ? "Pending"
+                          : isDeclined
+                            ? "Declined"
+                            : "Join"
+                    }
+                  />
+                </View>
+
+                <Body style={{ fontSize: 12 }}>{ws.description}</Body>
+
+                {isDeclined && req?.reason ? (
+                  <Body muted style={{ fontSize: 12 }}>
+                    Reason: {req.reason}
+                  </Body>
+                ) : null}
+
+                {isApproved ? (
+                  <Button
+                    title="Open assigned workspace"
+                    icon="enter-outline"
+                    disabled={cloud ? !assignedSpace : !hasAssignedWorkspace}
+                    onPress={() => {
+                      if (cloud && assignedSpace) {
+                        void cloud.select(assignedSpace.id)
+                          .then(() => router.push("/(tabs)/patients"))
+                          .catch(() => notify("Unable to open that patient care space."));
+                      } else if (!cloud) {
+                        router.push("/(tabs)/patients");
+                      }
+                    }}
+                  />
+                ) : isPending ? (
+                  <Button
+                    title="Pending"
+                    secondary
+                    disabled
+                    onPress={() => {}}
+                  />
+                ) : (
+                  <Button
+                    title={isDeclined ? "Request again" : "Request to join"}
+                    icon="add-circle-outline"
+                    disabled={requestingId === ws.id}
+                    loading={requestingId === ws.id}
+                    onPress={() => void handleJoinRequest(ws)}
+                  />
+                )}
+              </Card>
+            );
+          })}
+
+        {!wsLoading && !wsError && workspaces.length === 0 && (
+          <Empty
+            title="No workspaces found, try a different name"
+            body="Try searching for another department or specialty."
+            icon="search-outline"
+          />
+        )}
+      </Card>
+
       <Section
         title="Next consultation"
         action="See all"
@@ -173,11 +588,18 @@ export function DoctorHome() {
         />
       )}
       <Section title="Care tools" />
-      <Card>
+      <Card style={{ gap: 10 }}>
+        {!hasAssignedWorkspace && (
+          <Body muted style={{ fontSize: 12 }}>
+            Record review and workspace refresh unlock once an admin assigns or
+            approves your patient workspace.
+          </Body>
+        )}
         <Button
           title="Review permitted records"
           icon="folder-open-outline"
           secondary
+          disabled={!hasAssignedWorkspace}
           onPress={() => router.push("/(tabs)/records")}
         />
         <Button
@@ -186,10 +608,17 @@ export function DoctorHome() {
           secondary
           onPress={() => router.push("/verification")}
         />
+        <Button
+          title="Doctor availability"
+          icon="time-outline"
+          secondary
+          onPress={() => router.push("/doctor-availability")}
+        />
         {cloud && (
           <Button
             title="Refresh care workspace"
             secondary
+            disabled={!hasAssignedWorkspace}
             onPress={() =>
               void cloud
                 .refresh()

@@ -34,7 +34,6 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import { canRead, providers, Role } from "./clinic";
 import { useClinic } from "./store";
-import { StartupLoader } from "./branding";
 export const theme = {
   bg: "#F6F8FA",
   ink: "#162C35",
@@ -65,7 +64,7 @@ export function Icon({
   );
 }
 export function useReducedMotion() {
-  const [reduced, setReduced] = useState(true);
+  const [reduced, setReduced] = useState(false);
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled().then(setReduced);
     const listener = AccessibilityInfo.addEventListener(
@@ -1405,7 +1404,7 @@ export function Screen({
       clearRetries();
     };
   }, [clearRetries, scheduleReveal]);
-  if (!ready) return <StartupLoader />;
+  if (!ready) return null;
   if (
     !noGuard &&
     (!canRead(state) || (allowed && !allowed.includes(state.session!.role)))

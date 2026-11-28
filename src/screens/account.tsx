@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Switch, View } from "react-native";
 import { router } from "expo-router";
 import { useClinic } from "../store";
+import { clearFamilyCache } from "../family/family-api";
 import { Role, roles, visibleVisits } from "../clinic";
 import {
   Avatar,
@@ -122,7 +123,7 @@ export function ProfileScreen() {
         </Card>
       )}
       {role === "Patient" && (
-        <Card>
+        <Card style={{ gap: 12 }}>
           <View style={styles.row}>
             <View style={styles.iconBox}>
               <Icon name="people-outline" />
@@ -130,7 +131,7 @@ export function ProfileScreen() {
             <View style={{ flex: 1 }}>
               <Title small>Keep your family close</Title>
               <Body muted>
-                Let the family demo view your care updates and records.
+                Let linked family members view your care updates and records.
               </Body>
             </View>
             <Switch
@@ -150,6 +151,37 @@ export function ProfileScreen() {
               ? "Family access is enabled. You can revoke it at any time."
               : "Your family view is locked until you choose to enable it."}
           </Body>
+          <Button
+            title="Family & caregivers"
+            icon="shield-checkmark-outline"
+            secondary
+            onPress={() => router.push("/family-consent")}
+            style={{ minHeight: 44 }}
+          />
+        </Card>
+      )}
+      {role === "Family" && (
+        <Card style={{ gap: 12 }}>
+          <View style={styles.row}>
+            <View style={styles.iconBox}>
+              <Icon name="people-outline" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Title small>Family & caregivers</Title>
+              <Body muted>
+                {state.profile.consent
+                  ? "Patient consent is active for your read-only caregiver access."
+                  : "Send a link request or wait for the patient to enable consent."}
+              </Body>
+            </View>
+          </View>
+          <Button
+            title="Link to a patient"
+            icon="link-outline"
+            secondary
+            onPress={() => router.push("/family-consent")}
+            style={{ minHeight: 44 }}
+          />
         </Card>
       )}
       {!cloud && (
@@ -226,6 +258,7 @@ export function ProfileScreen() {
         onClose={() => setLogout(false)}
         onConfirm={() => {
           setLogout(false);
+          void clearFamilyCache();
           if (cloud) {
             void cloud
               .signOut()
@@ -247,16 +280,29 @@ export function ProfileScreen() {
 }
 export function InboxScreen() {
   const { state, dispatch } = useClinic();
+  const [category, setCategory] = useState("All");
   const visibleIds = new Set(visibleVisits(state).map((v) => v.id));
-  const items = state.activities.filter(
-    (n) => !n.visitId || visibleIds.has(n.visitId),
-  );
+  const items = state.activities.filter((n) => {
+    if (n.visitId && !visibleIds.has(n.visitId)) return false;
+    const isAccess =
+      n.title.startsWith("Access:") ||
+      /family|consent|access/i.test(n.title + " " + n.body);
+    if (category === "Access") return isAccess;
+    if (category === "Visits") return !!n.visitId;
+    if (category === "General") return !isAccess && !n.visitId;
+    return true;
+  });
   return (
     <Screen
       title="Your care updates"
       subtitle="The little details that keep you connected."
       back
     >
+      <Chips
+        values={["All", "Access", "Visits", "General"]}
+        value={category}
+        onChange={setCategory}
+      />
       <Button
         title="Mark all as read"
         secondary
@@ -439,7 +485,7 @@ export function SosScreen() {
         <Card>
           <Title small>Emergency dispatch is not connected</Title>
           <Body>
-            BLOOM MED cannot request an ambulance or notify emergency contacts.
+            MedBloom cannot request an ambulance or notify emergency contacts.
             Contact local emergency services directly for urgent help.
           </Body>
         </Card>

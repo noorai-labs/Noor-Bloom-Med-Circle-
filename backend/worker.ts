@@ -4,6 +4,7 @@ import { verifyToken } from "@clerk/backend";
 import {
   canRead,
   createState,
+  providers,
   type Action,
   type ClinicState,
   type Role,
@@ -25,6 +26,11 @@ import {
   type CallEnv,
 } from "./calls";
 import { providerRoute, ProviderError } from "./providers";
+import {
+  availabilityRoute,
+  AvailabilityError,
+  checkDoctorAvailabilityForSlot,
+} from "./availability";
 import { workspaceRoute, WorkspaceError } from "./workspaces";
 export { MedicineReminderScheduler } from "./reminders";
 
@@ -325,6 +331,8 @@ async function route(
     url.pathname.startsWith("/v1/providers/")
   )
     return providerRoute(request, env, user);
+  if (url.pathname === "/v1/availability")
+    return availabilityRoute(request, env, user);
   if (url.pathname === "/v1/organizations" && request.method === "GET") {
     const search = url.searchParams.get("search")?.trim().toLowerCase() || "";
     let query = "SELECT id, name, code FROM organizations";
@@ -705,7 +713,7 @@ async function route(
       action.visit = { ...action.visit, providerKind: verifiedProvider.kind };
       const existingSlot = await env.DB.prepare(
         `
-        SELECT 1 FROM appointment_slots 
+        SELECT 1 FROM appointment_slots
         WHERE provider_id=? AND date=? AND time=? AND status IN ('Requested', 'Confirmed', 'In Progress')
         UNION ALL
         SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
@@ -745,7 +753,7 @@ async function route(
       );
       if (currentVisit) {
         const targetSlot = await env.DB.prepare(`
-          SELECT 1 FROM appointment_slots 
+          SELECT 1 FROM appointment_slots
           WHERE provider_id=? AND date=? AND time=? AND visit_id!=? AND status IN ('Requested', 'Confirmed', 'In Progress')
           UNION ALL
           SELECT 1 FROM care_spaces, json_each(care_spaces.state, '$.visits')
@@ -806,6 +814,29 @@ async function route(
           version: 1,
         },
       };
+    }
+    if (action.type === "book" && verifiedProvider?.kind === "Doctor") {
+      await checkDoctorAvailabilityForSlot(
+        env,
+        action.visit.providerId,
+        action.visit.date,
+        action.visit.time,
+      );
+    } else if (action.type === "reschedule") {
+      const targetVisit = snapshot.state.visits.find(
+        (v) => v.id === action.visitId,
+      );
+      if (
+        targetVisit &&
+        targetVisit.providerKind === "Doctor"
+      ) {
+        await checkDoctorAvailabilityForSlot(
+          env,
+          targetVisit.providerId,
+          action.date,
+          action.time,
+        );
+      }
     }
     const stateForTransition =
       verifiedProvider &&
@@ -1228,6 +1259,7 @@ export default {
         !(e instanceof VerificationError) &&
         !(e instanceof CallError) &&
         !(e instanceof ProviderError) &&
+        !(e instanceof AvailabilityError) &&
         !(e instanceof WorkspaceError)
       )
         console.error("Unexpected Worker operation failure");
@@ -1238,6 +1270,7 @@ export default {
             e instanceof VerificationError ||
             e instanceof CallError ||
             e instanceof ProviderError ||
+            e instanceof AvailabilityError ||
             e instanceof WorkspaceError
               ? e.message
               : "Unable to complete the cloud request.",
@@ -1248,6 +1281,7 @@ export default {
             e instanceof VerificationError ||
             e instanceof CallError ||
             e instanceof ProviderError ||
+            e instanceof AvailabilityError ||
             e instanceof WorkspaceError
               ? e.status
               : 500,

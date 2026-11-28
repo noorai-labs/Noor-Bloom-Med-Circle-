@@ -592,6 +592,15 @@ module.exports = async ({ db, request }) => {
     "Patient search must find the newly verified doctor profile",
   );
 
+  const schedule = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+    (day) => ({ day, enabled: true, startTime: "00:00", endTime: "23:59" }),
+  );
+  assert.equal(
+    (await request(fullFlowDoc, "/v1/availability", "POST", { schedule })).status,
+    200,
+    "Verified doctor publishes availability before accepting bookings",
+  );
+
   // Patient sends a consultation request to the discovered verified doctor
   const bookRes = await request(
     fullFlowPatient,

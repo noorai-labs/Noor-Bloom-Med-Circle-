@@ -98,7 +98,7 @@ export function GoogleLogin() {
     if (expoGo) {
       setAuthFlow({
         busy: false,
-        error: "Google sign-in requires the installed BLOOM MED APK.",
+        error: "Google sign-in requires the installed MedBloom APK.",
       });
       return;
     }
@@ -284,7 +284,7 @@ export function GoogleLogin() {
           googleTitle={busy ? "Opening Google…" : "Continue with Google"}
           notice={
             expoGo
-              ? "Google sign-in needs the installed BLOOM MED development app; Expo Go cannot complete this callback."
+              ? "Google sign-in needs the installed MedBloom development app; Expo Go cannot complete this callback."
               : undefined
           }
           error={error}
@@ -331,7 +331,7 @@ export function GoogleLogin() {
                 </Body>
                 <Body muted>
                   Your Google password and account recovery are managed by
-                  Google. BLOOM MED never asks you to share your password or
+                  Google. MedBloom never asks you to share your password or
                   recovery codes.
                 </Body>
                 {Platform.OS === "web" ? (
@@ -384,7 +384,7 @@ export function GoogleLogin() {
                 <Body muted>
                   If Google sign-in succeeds but your care space does not load,
                   use Retry connection. If you see a required-field error,
-                  contact BLOOM MED support with the error text; do not send
+                  contact MedBloom support with the error text; do not send
                   identity documents or passwords.
                 </Body>
               </View>

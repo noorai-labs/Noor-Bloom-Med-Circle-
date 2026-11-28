@@ -308,7 +308,7 @@ export function MedicineReminderProvider({
   async function getPushToken() {
     if (isRunningInExpoGo() || Constants.executionEnvironment === "storeClient")
       throw new Error(
-        "Server push requires an installed BLOOM MED development or APK build. Expo Go supports local reminders.",
+        "Server push requires an installed MedBloom development or APK build. Expo Go supports local reminders.",
       );
     if (pushToken.current) return pushToken.current;
     const projectId =
@@ -378,7 +378,7 @@ export function MedicineReminderProvider({
         }
         if (!permission.allowed)
           throw new Error(
-            "Allow BLOOM MED notifications in your phone settings, then try again.",
+            "Allow MedBloom notifications in your phone settings, then try again.",
           );
       }
       await save({ ...prefs, enabled });
@@ -404,7 +404,7 @@ export function MedicineReminderProvider({
       await Notifications.scheduleNotificationAsync({
         identifier: "bloom-med:" + current.tag + ":test",
         content: {
-          title: "BLOOM MED reminders are ready",
+          title: "MedBloom reminders are ready",
           body: "Your phone can display medicine reminders.",
           sound: "default",
           data: { kind: "bloom-medicine", owner: current.tag },

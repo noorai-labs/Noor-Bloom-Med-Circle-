@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS doctor_availability (
+  user_id TEXT PRIMARY KEY,
+  schedule TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

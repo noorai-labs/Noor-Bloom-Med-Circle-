@@ -211,6 +211,12 @@ async function main() {
     await db.prepare(
       "INSERT INTO verification_applications(id,user_id,kind,status,details,valid_until) VALUES (?,?,'Doctor','Approved','{}','9999-12-31')",
     ).bind(randomUUID(), provider).run();
+    const schedule = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+      (day) => ({ day, enabled: true, startTime: "00:00", endTime: "23:59" }),
+    );
+    await db.prepare(
+      "INSERT INTO doctor_availability(user_id,schedule) VALUES (?,?)",
+    ).bind(provider, JSON.stringify(schedule)).run();
   }
   let state = await mutate("user_patient", {
     type: "profile",

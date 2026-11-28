@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View } from "react-native";
-import { router, useLocalSearchParams } from "expo-router";
+import { Text, View } from "react-native";
+import { Redirect, router, useLocalSearchParams } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 import * as Sharing from "expo-sharing";
 import { useClinic } from "../store";
@@ -8,11 +8,16 @@ import {
   Body,
   Button,
   Card,
+  Chip,
   Chips,
   Confirm,
   Field,
+  Icon,
   Screen,
+  styles,
+  theme,
   Title,
+  Touch,
 } from "../components";
 import type {
   VerificationApplication,
@@ -22,6 +27,11 @@ import type {
   VerificationStatus,
 } from "../verification-types";
 import { verificationDay } from "../verification-types";
+import {
+  getSelectedOrganization,
+  getOrganization,
+  type Organization,
+} from "../organizations";
 const empty: VerificationDetails = {
   fullName: "",
   country: "India",
@@ -73,7 +83,15 @@ export function VerificationScreen() {
     client.current = cloud?.verification;
   }, [cloud]);
   const [snapshot, setSnapshot] = useState<VerificationSnapshot | null>(null);
-  const params = useLocalSearchParams<{ kind?: string }>();
+  const params = useLocalSearchParams<{
+    kind?: string;
+    orgId?: string;
+    orgName?: string;
+  }>();
+  const [selectedOrg, setSelectedOrg] = useState<Organization | null>(() => {
+    return params.orgId ? getOrganization(params.orgId) ?? null : null;
+  });
+  const [orgHydrated, setOrgHydrated] = useState<boolean>(!!params.orgId);
   const [kind, setKind] = useState<VerificationKind>(
     params.kind === "Doctor"
       ? "Doctor"
@@ -81,7 +99,35 @@ export function VerificationScreen() {
         ? "Nurse"
         : "Patient",
   );
-  const [details, setDetails] = useState<VerificationDetails>(empty);
+  const [details, setDetails] = useState<VerificationDetails>(() => {
+    const org = params.orgId ? getOrganization(params.orgId) : undefined;
+    return {
+      ...empty,
+      organizationId: org?.id,
+      organizationName: org?.name || params.orgName,
+    };
+  });
+
+  useEffect(() => {
+    let active = true;
+    if (!params.orgId) {
+      void getSelectedOrganization().then((saved) => {
+        if (!active) return;
+        if (saved) {
+          setSelectedOrg(saved);
+          setDetails((d) => ({
+            ...d,
+            organizationId: saved.id,
+            organizationName: saved.name,
+          }));
+        }
+        setOrgHydrated(true);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [params.orgId]);
   const [documents, setDocuments] = useState<
     { id: string; name: string; mime: string }[]
   >([]);
@@ -109,6 +155,47 @@ export function VerificationScreen() {
     !!snapshot &&
     (!application ||
       ["Rejected", "Needs information"].includes(application.status));
+
+  const prefilledRevision = useRef<number | null>(null);
+  useEffect(() => {
+    if (
+      !application ||
+      !["Rejected", "Needs information"].includes(application.status) ||
+      prefilledRevision.current === application.revision
+    ) {
+      return;
+    }
+    prefilledRevision.current = application.revision;
+    let active = true;
+    void (async () => {
+      await Promise.resolve();
+      if (!active) return;
+      setDetails((prev) => ({
+        ...empty,
+        ...application.details,
+        organizationId:
+          prev.organizationId || application.details.organizationId,
+        organizationName:
+          prev.organizationName || application.details.organizationName,
+        consent: false,
+      }));
+    })();
+    return () => {
+      active = false;
+    };
+  }, [application]);
+
+  // Cannot-skip guard: new doctor applicants must select an organization before reaching upload form
+  if (
+    cloud &&
+    kind === "Doctor" &&
+    snapshot &&
+    !application &&
+    orgHydrated &&
+    !selectedOrg
+  ) {
+    return <Redirect href="/doctor-entry?step=org-search" />;
+  }
   async function act(action: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -189,12 +276,58 @@ export function VerificationScreen() {
             )}
           </Card>
           {application && (
-            <Card>
-              <Title small>
-                {application.kind} · {application.status}
-              </Title>
+            <Card style={{ gap: 10 }}>
+              <View style={[styles.row, { justifyContent: "space-between" }]}>
+                <Title small>
+                  {application.kind} Verification
+                </Title>
+                <Chip title={application.status} />
+              </View>
+
+              {(application.details.organizationName ||
+                (application.kind === "Doctor" && selectedOrg?.name)) ? (
+                <View
+                  style={{
+                    backgroundColor: "#F8FAFC",
+                    padding: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: "#E2E8F0",
+                  }}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: theme.muted, textTransform: "uppercase" }}>
+                    Affiliated Organization
+                  </Text>
+                  <Text style={{ fontSize: 14, fontWeight: "700", color: theme.ink, marginTop: 2 }}>
+                    {application.details.organizationName || selectedOrg?.name}
+                  </Text>
+                </View>
+              ) : null}
+
               <Body>{application.details.fullName}</Body>
-              {!!application.reason && <Body>{application.reason}</Body>}
+              {application.details.authority ? (
+                <Body muted style={{ fontSize: 12 }}>
+                  {application.details.authority} · Reg: {application.details.registrationNumber}
+                </Body>
+              ) : null}
+
+              {!!application.reason && (
+                <View
+                  style={{
+                    backgroundColor: "#FFFBEB",
+                    padding: 10,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: "#FDE68A",
+                  }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: "#B45309" }}>
+                    Reviewer Note:
+                  </Text>
+                  <Body style={{ fontSize: 13, marginTop: 2 }}>{application.reason}</Body>
+                </View>
+              )}
+
               {!!application.validUntil && (
                 <Body muted>
                   {application.validUntil <= verificationDay()
@@ -203,7 +336,7 @@ export function VerificationScreen() {
                   {application.validUntil}
                 </Body>
               )}
-              <Body muted>Application revision {application.revision}</Body>
+              <Body muted style={{ fontSize: 11 }}>Application revision {application.revision}</Body>
               {application.documents.map((doc) => (
                 <Button
                   key={doc.id}
@@ -237,12 +370,54 @@ export function VerificationScreen() {
             </Card>
           )}
           {editable && (
-            <Card>
+            <Card style={{ gap: 10 }}>
               <Title small>
                 {application
                   ? "Submit corrected evidence"
                   : "Apply for " + kind.toLowerCase() + " verification"}
               </Title>
+
+              {kind === "Doctor" && selectedOrg && (
+                <View
+                  style={{
+                    backgroundColor: "#F0FDF4",
+                    padding: 12,
+                    borderRadius: 12,
+                    borderWidth: 1,
+                    borderColor: "#86EFAC",
+                    gap: 6,
+                  }}
+                >
+                  <View style={[styles.row, { justifyContent: "space-between" }]}>
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: theme.green, textTransform: "uppercase" }}>
+                      Chosen Organization
+                    </Text>
+                    <Touch
+                      label="Change organization"
+                      onPress={() => {
+                        setDetails((d) => ({
+                          ...d,
+                          organizationId: undefined,
+                          organizationName: undefined,
+                          specialty: "",
+                        }));
+                        router.replace("/doctor-entry?step=org-search");
+                      }}
+                    >
+                      <Text style={{ color: theme.green, fontSize: 12, fontWeight: "700" }}>
+                        Change
+                      </Text>
+                    </Touch>
+                  </View>
+                  <Text style={{ fontSize: 15, fontWeight: "700", color: theme.ink }}>
+                    {selectedOrg.name}
+                  </Text>
+                  <Body muted style={{ fontSize: 12 }}>
+                    {selectedOrg.city}, {selectedOrg.state} · License: {selectedOrg.licenseNumber}
+                  </Body>
+                </View>
+              )}
+
               <Body muted>
                 Country: India. Supply only the evidence needed for review. Do
                 not enter Aadhaar numbers in these fields. Use masked identity
@@ -267,6 +442,66 @@ export function VerificationScreen() {
                         : "Your State Nursing Council"
                     }
                   />
+                  {kind === "Doctor" && (
+                    <View style={{ gap: 8 }}>
+                      {[
+                        ["Karnataka Medical Council", "Delhi Medical Council"],
+                        [
+                          "Maharashtra Medical Council",
+                          "National Medical Commission",
+                        ],
+                      ].map((row) => (
+                        <View
+                          key={row[0]}
+                          style={{ flexDirection: "row", gap: 8 }}
+                        >
+                          {row.map((council) => {
+                            const active = details.authority === council;
+                            return (
+                              <Touch
+                                key={council}
+                                label={council}
+                                selected={active}
+                                onPress={() =>
+                                  setDetails((d) => ({
+                                    ...d,
+                                    authority: council,
+                                  }))
+                                }
+                                style={{
+                                  flex: 1,
+                                  paddingVertical: 10,
+                                  paddingHorizontal: 8,
+                                  borderRadius: 12,
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  backgroundColor: active
+                                    ? theme.green
+                                    : "white",
+                                  borderWidth: 1,
+                                  borderColor: active
+                                    ? theme.green
+                                    : theme.border,
+                                }}
+                              >
+                                <Text
+                                  numberOfLines={2}
+                                  style={{
+                                    fontSize: 11.5,
+                                    fontWeight: "600",
+                                    color: active ? "white" : theme.ink,
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  {council}
+                                </Text>
+                              </Touch>
+                            );
+                          })}
+                        </View>
+                      ))}
+                    </View>
+                  )}
                   <Field
                     label="Professional registration number"
                     value={details.registrationNumber}
@@ -281,6 +516,16 @@ export function VerificationScreen() {
                       setDetails((d) => ({ ...d, qualification }))
                     }
                   />
+                  {kind === "Doctor" && (
+                    <Field
+                      label="Primary medical specialty"
+                      value={details.specialty || ""}
+                      onChange={(specialty) =>
+                        setDetails((d) => ({ ...d, specialty }))
+                      }
+                      placeholder="e.g. General Medicine, Cardiology, Pediatrics"
+                    />
+                  )}
                 </>
               )}
               <Body muted>
@@ -309,19 +554,13 @@ export function VerificationScreen() {
                   />
                 </View>
               ))}
-              <Button
-                title="Attach verification evidence"
-                secondary
-                disabled={busy || documents.length >= 4}
-                onPress={() => void act(attach)}
-              />
-              <Button
-                title={
+              <Touch
+                label={
                   details.consent
                     ? "Consent given · tap to withdraw"
                     : "I consent to upload and manual review of this evidence"
                 }
-                secondary
+                selected={details.consent}
                 disabled={busy}
                 onPress={() =>
                   void act(async () => {
@@ -335,7 +574,86 @@ export function VerificationScreen() {
                     setDetails((d) => ({ ...d, consent: !d.consent }));
                   })
                 }
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: 13,
+                  borderRadius: 14,
+                  borderWidth: 1,
+                  borderColor: details.consent ? theme.green : theme.border,
+                  backgroundColor: details.consent ? "#F0FDF4" : "#F8FAFC",
+                }}
+              >
+                <View
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 6,
+                    borderWidth: 2,
+                    borderColor: details.consent ? theme.green : "#94A3B8",
+                    backgroundColor: details.consent ? theme.green : "white",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {details.consent && (
+                    <Icon name="checkmark" size={14} color="white" />
+                  )}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: 13,
+                      fontWeight: "600",
+                      color: theme.ink,
+                      lineHeight: 18,
+                    }}
+                  >
+                    I consent to upload and manual review of this evidence
+                  </Text>
+                  {details.consent && (
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        color: theme.green,
+                        fontWeight: "600",
+                        marginTop: 2,
+                      }}
+                    >
+                      Consent given · tap to withdraw
+                    </Text>
+                  )}
+                </View>
+              </Touch>
+              <Button
+                title="Attach verification evidence"
+                icon="document-attach-outline"
+                secondary
+                disabled={busy || documents.length >= 4}
+                onPress={() => void act(attach)}
               />
+              {!!error && (
+                <View
+                  style={{
+                    backgroundColor: "#FEF2F2",
+                    borderColor: "#FECACA",
+                    borderWidth: 1,
+                    borderRadius: 12,
+                    padding: 10,
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "#DC2626",
+                      fontSize: 13,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {error}
+                  </Text>
+                </View>
+              )}
               <Button
                 title={
                   application
@@ -343,18 +661,42 @@ export function VerificationScreen() {
                     : "Submit for manual review"
                 }
                 loading={busy}
-                disabled={
-                  busy ||
-                  !documents.length ||
-                  !details.consent ||
-                  details.fullName.trim().length < 2
-                }
+                disabled={busy}
                 onPress={() =>
                   void act(async () => {
+                    if (details.fullName.trim().length < 2) {
+                      throw new Error("Enter your full legal name.");
+                    }
+                    if (kind !== "Patient") {
+                      if (!details.authority.trim()) {
+                        throw new Error("Enter or select your registering council.");
+                      }
+                      if (!details.registrationNumber.trim()) {
+                        throw new Error("Enter your registration number.");
+                      }
+                      if (!details.qualification.trim()) {
+                        throw new Error("Enter your qualification.");
+                      }
+                      if (kind === "Doctor" && !details.specialty?.trim()) {
+                        throw new Error("Enter your primary medical specialty.");
+                      }
+                    }
+                    if (!details.consent) {
+                      throw new Error("Tick the consent box before submitting.");
+                    }
+                    if (!documents.length) {
+                      throw new Error("Attach at least one verification document.");
+                    }
                     await cloud.verification.request("/submit", {
                       kind,
                       revision: application?.revision || 0,
-                      details,
+                      details: {
+                        ...details,
+                        organizationId:
+                          selectedOrg?.id || details.organizationId,
+                        organizationName:
+                          selectedOrg?.name || details.organizationName,
+                      },
                       documents: documents.map((d) => d.id),
                     });
                     setDocuments([]);

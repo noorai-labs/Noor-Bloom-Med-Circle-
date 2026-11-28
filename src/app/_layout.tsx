@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { Animated, Platform, Text, View } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { Text, View } from "react-native";
 import { ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { cloudMode, clerkKey, configurationError } from "../cloud-config";
@@ -10,7 +10,7 @@ import { StatusBar } from "expo-status-bar";
 import { ClinicProvider, useClinic } from "../store";
 import { MedicineReminderProvider } from "../medicine-reminders";
 import { StartupLoader } from "../branding";
-import { theme, useReducedMotion } from "../components";
+import { theme } from "../components";
 export default function RootLayout() {
   if (configurationError)
     return (
@@ -46,28 +46,18 @@ export default function RootLayout() {
 }
 function AppNavigation() {
   const { ready } = useClinic();
-  const [introFinished, setIntroFinished] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
-  const [opacity] = useState(() => new Animated.Value(1));
-  const reduced = useReducedMotion();
+  const [introDone, setIntroDone] = useState(false);
+
+  const handleIntroComplete = useCallback(() => {
+    setIntroDone(true);
+  }, []);
+
   useEffect(() => {
     SplashScreen.hideAsync().catch(() => {});
-    const timer = setTimeout(() => setIntroFinished(true), 1100);
-    return () => clearTimeout(timer);
   }, []);
-  const loading = !ready || !introFinished;
-  useEffect(() => {
-    if (loading) return;
-    const fade = Animated.timing(opacity, {
-      toValue: 0,
-      duration: reduced ? 0 : 240,
-      useNativeDriver: Platform.OS !== "web",
-    });
-    fade.start(({ finished }) => {
-      if (finished) setDismissed(true);
-    });
-    return () => fade.stop();
-  }, [loading, opacity, reduced]);
+
+  const dismissed = ready && introDone;
+
   return (
     <MedicineReminderProvider>
       <View style={{ flex: 1 }}>
@@ -87,18 +77,7 @@ function AppNavigation() {
           />
         </Stack>
         {!dismissed && (
-          <Animated.View
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              opacity,
-            }}
-          >
-            <StartupLoader />
-          </Animated.View>
+          <StartupLoader onIntroComplete={handleIntroComplete} />
         )}
       </View>
     </MedicineReminderProvider>

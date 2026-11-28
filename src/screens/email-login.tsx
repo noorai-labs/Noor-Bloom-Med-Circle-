@@ -232,11 +232,11 @@ export function EmailLogin({
                     : attempt
                       ? `Enter the 6-digit verification code sent to ${email}.`
                       : accountMissing
-                        ? "No BLOOM MED account was found for this email."
+                        ? "No MedBloom account was found for this email."
                         : creatingAccount
                           ? displayRole !== "Patient"
                             ? "Choose your role and enter your email for a 6-digit verification code."
-                            : "Join BLOOM MED with your email to get a 6-digit verification code."
+                            : "Join MedBloom with your email to get a 6-digit verification code."
                           : "We will email you a one-time 6-digit sign-in code."}
               </Body>
             )}
@@ -489,7 +489,7 @@ export function EmailLogin({
             label={
               creatingAccount
                 ? "Sign in with an existing account"
-                : "Create a BLOOM MED account"
+                : "Create a MedBloom account"
             }
             disabled={busy}
             onPress={() =>
@@ -503,7 +503,7 @@ export function EmailLogin({
             <Text style={{ fontSize: 13, color: theme.muted }}>
               {creatingAccount
                 ? "Already have an account? "
-                : "New to BLOOM MED? "}
+                : "New to MedBloom? "}
               <Text style={{ color: theme.green, fontWeight: "700" }}>
                 {creatingAccount ? "Sign in" : "Create account"}
               </Text>
