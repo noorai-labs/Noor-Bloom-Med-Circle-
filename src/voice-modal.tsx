@@ -359,8 +359,7 @@ export function VoiceModal({
         const navToken = ++pendingNavTokenRef.current;
         const target = res.targetRoute;
 
-        const speechResult = await deepgramCartesiaAdapter.synthesizeSpeech(
-          res.spokenResponse,
+        const speechResult = await deepgramCartesiaAdapter.speakScreenPrompt(
           lang,
           () => {
             // Schedule handoff ONLY once audible playback actually starts
@@ -410,8 +409,7 @@ export function VoiceModal({
       }
 
       // Conversational or confirmation-required queries remain inside the modal
-      const speechResult = await deepgramCartesiaAdapter.synthesizeSpeech(
-        res.spokenResponse,
+      const speechResult = await deepgramCartesiaAdapter.speakScreenPrompt(
         lang,
       );
 

@@ -28,6 +28,7 @@ function load(name) {
 const { createState, transition, nextDays, visibleVisits, dayKey, migrate } =
   load("clinic");
 const { initialState } = load("data");
+const { cloudTransition } = load("cloud-transition");
 let state = createState();
 const session = (role, providerId = "") => {
   state = transition(state, {
@@ -149,6 +150,17 @@ change({
   },
 });
 assert.equal(state.consultations.length, 1);
+const restrictedSnapshot = {
+  ...state,
+  consultations: [],
+  savedConsultationVisitIds: [doctorVisit],
+};
+const optimisticCompletion = cloudTransition(
+  restrictedSnapshot,
+  { type: "status", visitId: doctorVisit, status: "Completed" },
+  "complete",
+);
+assert.equal(optimisticCompletion.visits[0].status, "Completed");
 assert.equal(
   state.medicines.length,
   3,

@@ -1,3 +1,4 @@
+import { doctorDashboardId } from "../care-space-ids";
 import React, { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import { Redirect, router } from "expo-router";
@@ -38,6 +39,9 @@ export default function DoctorEntry() {
     (item) => item.kind === "Doctor",
   );
   const spaces = cloud?.spaces.filter((space) => space.role === "Doctor") || [];
+  const dashboardId = doctorDashboardId(state.session.identifier);
+  const dashboard = spaces.find((space) => space.id === dashboardId);
+  const assigned = spaces.filter((space) => space.id !== dashboardId);
   async function run(action: () => Promise<void>) {
     if (busy) return;
     setBusy(true);
@@ -74,9 +78,21 @@ export default function DoctorEntry() {
             Submit your registration and supporting documents for manual review.
           </Body>
         )}
+        {application?.status === "Approved" && dashboard && (
+          <Button
+            title="Enter Doctor Dashboard"
+            disabled={busy}
+            onPress={() =>
+              void run(async () => {
+                await cloud!.select(dashboard.id);
+              })
+            }
+          />
+        )}
         <Button
           title={application ? "View doctor application" : "Apply as a doctor"}
           disabled={busy}
+          secondary={application?.status === "Approved"}
           onPress={() =>
             router.push({
               pathname: "/verification",
@@ -87,8 +103,8 @@ export default function DoctorEntry() {
       </Card>
       <Card>
         <Title small>Assigned patient workspaces</Title>
-        {spaces.length ? (
-          spaces.map((space) => (
+        {assigned.length ? (
+          assigned.map((space) => (
             <Button
               key={space.id}
               title={"Open " + space.name}

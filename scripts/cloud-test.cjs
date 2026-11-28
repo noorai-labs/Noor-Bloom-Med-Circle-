@@ -206,6 +206,12 @@ async function main() {
     ).status,
     400,
   );
+  // Give the fictional providers used by the legacy booking fixtures current verification.
+  for (const provider of ["1", "2"]) {
+    await db.prepare(
+      "INSERT INTO verification_applications(id,user_id,kind,status,details,valid_until) VALUES (?,?,'Doctor','Approved','{}','9999-12-31')",
+    ).bind(randomUUID(), provider).run();
+  }
   let state = await mutate("user_patient", {
     type: "profile",
     profile: {
@@ -984,6 +990,7 @@ async function main() {
   });
   await require("./calls-cloud-test.cjs")({ db, request, mediaRooms });
   await require("./provider-cloud-test.cjs")({ db, request, mf });
+  await require("./workspace-cloud-test.cjs")({ db, request });
   await require("./voice-cloud-test.cjs").runUnconfiguredVoiceChecks({
     request,
     mf,

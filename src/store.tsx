@@ -35,7 +35,6 @@ export type CloudControls = {
     status: () => Promise<{ sttAvailable: boolean; ttsAvailable: boolean }>;
     sttToken: () => Promise<{ accessToken: string; expiresIn: number }>;
     synthesizeTts: (
-      transcript: string,
       language: import("./voice-types").VoiceLanguage,
       signal?: AbortSignal,
     ) => Promise<ArrayBuffer>;

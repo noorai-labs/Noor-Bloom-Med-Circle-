@@ -25,7 +25,13 @@ export class VoiceError extends Error {
 const CARTESIA_VOICE_ID = "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4";
 const CARTESIA_VERSION = "2024-06-10";
 const CARTESIA_MODEL_ID = "sonic-3";
-const MAX_TTS_LENGTH = 1000;
+const SCREEN_PROMPT: Record<VoiceLanguage, string> = {
+  "en-IN": "Please follow the instructions on screen.",
+  "hi-IN": "कृपया स्क्रीन पर दिए गए निर्देशों का पालन करें।",
+  "kn-IN": "ದಯವಿಟ್ಟು ಪರದೆಯ ಮೇಲಿನ ಸೂಚನೆಗಳನ್ನು ಅನುಸರಿಸಿ.",
+  "ta-IN": "திரையில் உள்ள வழிமுறைகளைப் பின்பற்றவும்.",
+  "te-IN": "దయచేసి తెరపై ఉన్న సూచనలను అనుసరించండి.",
+};
 
 const CARTESIA_LANG_MAP: Record<VoiceLanguage, string> = {
   "en-IN": "en",
@@ -121,26 +127,15 @@ export async function voiceRoute(
       );
     }
 
-    let body: { transcript?: unknown; language?: unknown };
+    let body: { language?: unknown };
     try {
-      body = (await request.json()) as {
-        transcript?: unknown;
-        language?: unknown;
-      };
+      body = await request.json();
+      if (!body || typeof body !== "object" || Array.isArray(body) ||
+          Object.keys(body).some((key) => key !== "language")) {
+        throw new Error("Unsupported speech synthesis input");
+      }
     } catch {
-      throw new VoiceError(400, "Invalid voice synthesis request payload.");
-    }
-
-    const transcript =
-      typeof body.transcript === "string" ? body.transcript.trim() : "";
-    if (!transcript) {
-      throw new VoiceError(400, "Transcript text is required for synthesis.");
-    }
-    if (transcript.length > MAX_TTS_LENGTH) {
-      throw new VoiceError(
-        400,
-        `Transcript must be ${MAX_TTS_LENGTH} characters or fewer.`,
-      );
+      throw new VoiceError(400, "Speech synthesis accepts only a language.");
     }
 
     const language: VoiceLanguage = isSupportedLanguage(body.language)
@@ -157,7 +152,7 @@ export async function voiceRoute(
       },
       body: JSON.stringify({
         model_id: CARTESIA_MODEL_ID,
-        transcript,
+        transcript: SCREEN_PROMPT[language],
         voice: {
           mode: "id",
           id: CARTESIA_VOICE_ID,

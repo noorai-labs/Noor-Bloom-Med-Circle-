@@ -16,7 +16,7 @@ async function runUnconfiguredVoiceChecks({ request, mf }) {
 
   const unauthTts = await mf.dispatchFetch("http://test/v1/voice/tts", {
     method: "POST",
-    body: JSON.stringify({ transcript: "Hello", language: "en-IN" }),
+    body: JSON.stringify({ language: "en-IN" }),
   });
   assert.equal(unauthTts.status, 401);
 
@@ -38,7 +38,7 @@ async function runUnconfiguredVoiceChecks({ request, mf }) {
     "user_patient",
     "/v1/voice/tts",
     "POST",
-    { transcript: "Show my medicines", language: "en-IN" },
+    { language: "en-IN" },
   );
   assert.equal(ttsUnavailable.status, 503);
 }
@@ -120,6 +120,7 @@ async function runStandalone() {
               const payload = await req.json();
               assert.equal(payload.model_id, "sonic-3");
               assert.equal(payload.language, "hi");
+              assert.equal(payload.transcript, "कृपया स्क्रीन पर दिए गए निर्देशों का पालन करें।");
               return new Response(new Uint8Array([0x49, 0x44, 0x33, 0x03]), {
                 status: 200,
                 headers: { "Content-Type": "audio/mpeg" },
@@ -176,18 +177,18 @@ async function runStandalone() {
     assert.equal(tokenJson.expiresIn, 60);
     assert.equal(deepgramGrantCalls, 1);
 
-    // Validation rejects empty and overlong transcripts
+    // Reject even short patient-specific text before contacting Cartesia.
     const emptyTts = await mf.dispatchFetch("http://test/v1/voice/tts", {
       method: "POST",
       headers: authHeaders("patient_1"),
-      body: JSON.stringify({ transcript: "   ", language: "hi-IN" }),
+      body: JSON.stringify({ transcript: "Patient medication 10 mg", language: "hi-IN" }),
     });
     assert.equal(emptyTts.status, 400);
 
     const longTts = await mf.dispatchFetch("http://test/v1/voice/tts", {
       method: "POST",
       headers: authHeaders("patient_1"),
-      body: JSON.stringify({ transcript: "a".repeat(1001), language: "hi-IN" }),
+      body: JSON.stringify({ transcript: "Patient record summary", language: "hi-IN" }),
     });
     assert.equal(longTts.status, 400);
 
@@ -196,7 +197,6 @@ async function runStandalone() {
       method: "POST",
       headers: authHeaders("patient_1"),
       body: JSON.stringify({
-        transcript: "यह आपकी दवाइयों का शेड्यूल है",
         language: "hi-IN",
       }),
     });

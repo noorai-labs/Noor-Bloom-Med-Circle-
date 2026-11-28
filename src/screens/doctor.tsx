@@ -1,3 +1,4 @@
+import { doctorDashboardId } from "../care-space-ids";
 import { providers } from "../provider-display";
 import React, { useState } from "react";
 import { Text, View } from "react-native";
@@ -263,8 +264,9 @@ export function DoctorPatients() {
   const { state, cloud, notify } = useClinic();
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(false);
+  const dashboard = doctorDashboardId(state.session?.identifier ?? "");
   const spaces = cloud
-    ? cloud.spaces.filter((s) => s.role === "Doctor")
+    ? cloud.spaces.filter((s) => s.role === "Doctor" && s.id !== dashboard)
     : [
         {
           id: "demo",

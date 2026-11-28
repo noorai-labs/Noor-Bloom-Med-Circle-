@@ -6,7 +6,7 @@
  * - Features generation-guarded cancellation, utterance buffering, and barge-in VAD
  */
 
-import { SpeechProviderAdapter, resolveVoiceIntent } from "./voice-adapter";
+import { resolveVoiceIntent } from "./voice-adapter";
 import {
   VoiceIntentResolution,
   VoiceLanguage,
@@ -25,7 +25,6 @@ export interface VoiceBackendClient {
   status: () => Promise<{ sttAvailable: boolean; ttsAvailable: boolean }>;
   sttToken: () => Promise<{ accessToken: string; expiresIn: number }>;
   synthesizeTts: (
-    transcript: string,
     language: VoiceLanguage,
     signal?: AbortSignal,
   ) => Promise<ArrayBuffer>;
@@ -40,7 +39,7 @@ export interface DeepgramStreamingCallbacks {
   onVolumeChange?: (volume: number) => void;
 }
 
-export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
+export class DeepgramCartesiaAdapter {
   private backendClient: VoiceBackendClient | null = null;
   private activeAudio: HTMLAudioElement | null = null;
   private activePlaybackTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -102,8 +101,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
    * Synthesize speech via authenticated backend proxy (/v1/voice/tts).
    * Supports cancellation before audio element creation via speechGeneration & AbortController.
    */
-  async synthesizeSpeech(
-    text: string,
+  async speakScreenPrompt(
     language: VoiceLanguage = "en-IN",
     onPlaybackStart?: () => void,
   ): Promise<{ synthesized: boolean; durationMs: number }> {
@@ -119,7 +117,6 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
 
     try {
       const audioBytes = await this.backendClient.synthesizeTts(
-        text,
         language,
         controller.signal,
       );
@@ -177,7 +174,7 @@ export class DeepgramCartesiaAdapter implements SpeechProviderAdapter {
         audio.onended = () => done(true);
         audio.onerror = () => done(false);
 
-        const maxDuration = Math.max(5000, text.length * 140);
+        const maxDuration = 8000;
         fallbackTimer = setTimeout(() => done(true), maxDuration);
         this.activePlaybackTimeout = fallbackTimer;
 

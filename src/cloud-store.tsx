@@ -396,13 +396,13 @@ function CloudUserStore({ children }: { children: React.ReactNode }) {
                 method: "POST",
                 body: JSON.stringify({}),
               }),
-            synthesizeTts: async (transcript, language, signal) =>
+            synthesizeTts: async (language, signal) =>
               cloudBinaryRequest(
                 await token(),
                 "/v1/voice/tts",
                 {
                   method: "POST",
-                  body: JSON.stringify({ transcript, language }),
+                  body: JSON.stringify({ language }),
                 },
                 signal,
               ),
