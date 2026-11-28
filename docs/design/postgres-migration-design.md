@@ -20,7 +20,7 @@ BloomMed currently operates on Cloudflare D1 (edge SQLite) with Cloudflare R2 fo
 This document details the complete migration architecture, data mappings, adapter contract, parity test methodology, and production rollout/cutover strategy.
 
 ### Strict Scope Boundaries
-- **IN SCOPE:** All 19 Cloudflare D1 tables (Care spaces, visits, medical records, memberships, verification, audit trails, appointment slots, and concurrency invariants).
+- **IN SCOPE:** All 23 Cloudflare D1 tables (Care spaces, visits, medical records, memberships, verification, audit trails, appointment slots, and concurrency invariants).
 - **EXPLICITLY OUT OF SCOPE (Acceptance Criteria):**
   - **Cloudflare R2 Object Storage (`env.FILES`):** File binaries (patient records, attachments, verification IDs) remain strictly in Cloudflare R2. Only document metadata is tracked in database tables.
   - **Medicine Reminder Durable Object SQLite (`env.REMINDERS`):** The internal SQLite database within `MedicineReminderScheduler` (`ctx.storage`) runs inside single-threaded Cloudflare Durable Objects and is explicitly excluded from this D1-to-PostgreSQL migration.
@@ -89,7 +89,7 @@ sequenceDiagram
 
 ## 3. Step 2: D1 Table, Query & Stored JSON Inventory
 
-The current D1 database consists of **19 tables** across 6 ordered migrations:
+The current D1 database consists of **23 tables** across the migrations through 0008:
 
 ### 3.1 Migration Inventory
 
@@ -114,6 +114,10 @@ The current D1 database consists of **19 tables** across 6 ordered migrations:
 | 17 | `consultation_call_slots` | `0005_consultation_calls.sql` | `slot INTEGER` | CHECK(`slot` BETWEEN 1 AND 3), UNIQUE(`room_id`) | None |
 | 18 | `appointment_slots` | `0006_appointment_slots.sql` | `id TEXT` | UNIQUE Partial Index `appointment_active_slot` on `(provider_id, date, time) WHERE status IN ('Requested', 'Confirmed', 'In Progress')` | None |
 | 19 | `completed_operations` | `0006_appointment_slots.sql` | `(space_id, operation_id)` | FK &rarr; `care_spaces(id)` | None |
+| 20 | `organizations` | `0006_organizations.sql` | `id TEXT` | Directory seeds preserve organization IDs | None |
+| 21 | `workspace_organizations` | `0006_organizations.sql`, `0007_workspace_requests.sql` | `space_id` | Care space and organization foreign keys; workspace display name | None |
+| 22 | `organization_admins` | `0007_workspace_requests.sql` | `(user_id, organization_id)` | Organization foreign key; map `active` to BOOLEAN | None |
+| 23 | `workspace_join_requests` | `0007_workspace_requests.sql`, `0008_workspace_join_attempt.sql` | `id TEXT` | Unique user and workspace; status check; review attempt; organization/status/update index | None |
 
 ### 3.2 Key Stored JSON Fields
 1. `care_spaces.state`: Contains patient profile, clinical visits list, medicines, uploaded record descriptors, consultations, activities, approved items, and SOS state.

@@ -1,7 +1,7 @@
 -- ============================================================================
 -- BloomMed: Production PostgreSQL Schema Draft
 -- Target: PostgreSQL 14+ / Neon / AWS RDS / Supabase
--- Migrates from Cloudflare D1 (0001_care.sql through 0006_appointment_slots.sql)
+-- Migrates from Cloudflare D1 (0001 through 0008)
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -244,3 +244,50 @@ CREATE TABLE IF NOT EXISTS completed_operations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (space_id, operation_id)
 );
+
+-- Doctor organizations and workspace requests (D1 migrations 0006–0008).
+CREATE TABLE IF NOT EXISTS organizations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS workspace_organizations (
+  space_id VARCHAR(64) PRIMARY KEY REFERENCES care_spaces(id),
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  name TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS organization_admins (
+  user_id TEXT NOT NULL,
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, organization_id)
+);
+
+CREATE TABLE IF NOT EXISTS workspace_join_requests (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  space_id VARCHAR(64) NOT NULL REFERENCES care_spaces(id),
+  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  status TEXT NOT NULL CHECK (status IN ('Pending', 'Approved', 'Rejected')),
+  reason TEXT NOT NULL DEFAULT '',
+  reviewed_by TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (user_id, space_id)
+);
+
+CREATE INDEX IF NOT EXISTS workspace_join_requests_org_status
+  ON workspace_join_requests(organization_id, status, updated_at);
+
+INSERT INTO organizations (id, name, code) VALUES
+  ('org_bloom', 'MedBloom Health Network', 'BLOOM'),
+  ('org_apollo', 'Apollo Clinic Network', 'APOLLO'),
+  ('org_city', 'City General Hospital', 'CGH'),
+  ('org_fortis', 'Fortis Care Center', 'FORTIS')
+ON CONFLICT (id) DO NOTHING;

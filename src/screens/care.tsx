@@ -7,8 +7,10 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useClinic } from "../store";
 import {
   formatDate,
+  hasSavedConsultation,
   nextDays,
   nursing,
+  nursingVisit,
   terminal,
   times,
   visibleVisits,
@@ -672,6 +674,7 @@ export function VisitScreen() {
   const role = state.session!.role;
   const staff = ["Doctor", "Nurse", "Admin"].includes(role);
   const consultation = state.consultations.find((n) => n.visitId === v.id);
+  const consultationSaved = hasSavedConsultation(state, v.id);
   const progress = ["Requested", "Confirmed", "In Progress", "Completed"];
   const current = progress.indexOf(v.status);
   return (
@@ -853,7 +856,7 @@ export function VisitScreen() {
           />
         </Card>
       )}
-      {role === "Doctor" && v.status === "In Progress" && !consultation && (
+      {role === "Doctor" && v.status === "In Progress" && !consultationSaved && (
         <Card>
           <Title small>Send a care plan</Title>
           <Field
@@ -964,10 +967,10 @@ export function VisitScreen() {
           )}
         </Card>
       )}
-      {staff && v.status === "In Progress" && !nursing(p.id) && (
+      {staff && v.status === "In Progress" && !nursingVisit(v) && (
         <Button
           title="Complete consultation"
-          disabled={!consultation}
+          disabled={!consultationSaved}
           onPress={() =>
             dispatch({ type: "status", visitId: v.id, status: "Completed" })
           }

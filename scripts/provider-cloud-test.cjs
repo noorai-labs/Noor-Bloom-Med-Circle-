@@ -351,6 +351,250 @@ module.exports = async ({ db, request, mf }) => {
   assert.equal(postDisallowed.status, 405);
   assert.equal(postDisallowed.data.error, "Method not allowed.");
 
+  // 12. Full end-to-end path through real submission, approval, and discovery
+  const e2eApplicant = "e2e_doctor_applicant_" + randomUUID().slice(0, 8);
+  const pdfContent = "%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF";
+  const uploadRes = await request(
+    e2eApplicant,
+    "/v1/verification/documents?consent=1&name=qualification.pdf",
+    "POST",
+    pdfContent,
+    "application/pdf",
+  );
+  assert.equal(uploadRes.status, 200, JSON.stringify(uploadRes.data));
+  const docEvidenceId = uploadRes.data.id;
+
+  // Submit doctor verification with specialty, languages (including whitespace and empty items), and modes
+  const submissionRes = await request(
+    e2eApplicant,
+    "/v1/verification/submit",
+    "POST",
+    {
+      kind: "Doctor",
+      revision: 0,
+      details: {
+        fullName: "Dr. FullPath Specialist",
+        country: "India",
+        authority: "Karnataka Medical Council",
+        registrationNumber: "KMC-E2E-7788",
+        qualification: "MBBS, DM - Cardiology",
+        consent: true,
+        specialty: "  Cardiology  ",
+        languages: ["  Kannada  ", "English", "  ", ""],
+        modes: ["video", "invalid_mode"],
+      },
+      documents: [docEvidenceId],
+    },
+  );
+  assert.equal(submissionRes.status, 200, JSON.stringify(submissionRes.data));
+  const submissionId = submissionRes.data.id;
+
+  // Reviewer approves the application via the real review endpoint
+  const reviewerUser = "provider_e2e_reviewer";
+  await db
+    .prepare(
+      "INSERT OR REPLACE INTO verification_reviewers(user_id,active) VALUES (?,1)",
+    )
+    .bind(reviewerUser)
+    .run();
+
+  const reviewRes = await request(
+    reviewerUser,
+    "/v1/verification/review",
+    "POST",
+    {
+      id: submissionId,
+      revision: 1,
+      status: "Approved",
+      reason: "Verified credentials against national medical registry",
+      identityReference: "AADHAAR-VERIFIED-E2E",
+      registrationReference: "KMC-REG-CHECKED-OK",
+      validUntil: futureDate,
+    },
+  );
+  assert.equal(reviewRes.status, 200, JSON.stringify(reviewRes.data));
+
+  // Now verify that the real submitted & approved clinician is discoverable via GET /v1/providers
+  // Specialty filter
+  const e2eSpecialty = await request(
+    patientUser,
+    "/v1/providers?specialty=cardiology",
+  );
+  assert.equal(e2eSpecialty.status, 200);
+  const foundBySpecialty = e2eSpecialty.data.providers.find(
+    (p) => p.id === e2eApplicant,
+  );
+  assert.ok(foundBySpecialty, "Provider submitted with specialty must be discoverable");
+  assert.equal(foundBySpecialty.specialty, "Cardiology");
+  assert.deepEqual(foundBySpecialty.languages, ["Kannada", "English"]);
+  assert.deepEqual(foundBySpecialty.modes, ["video"]);
+
+  // Language filter
+  const e2eLanguage = await request(
+    patientUser,
+    "/v1/providers?language=kannada",
+  );
+  assert.equal(e2eLanguage.status, 200);
+  assert.ok(
+    e2eLanguage.data.providers.some((p) => p.id === e2eApplicant),
+    "Provider submitted with Kannada language must be discoverable",
+  );
+
+  // Mode filter (video consultation mode)
+  const e2eMode = await request(patientUser, "/v1/providers?mode=video");
+  assert.equal(e2eMode.status, 200);
+  assert.ok(
+    e2eMode.data.providers.some((p) => p.id === e2eApplicant),
+    "Provider submitted with video mode must be discoverable",
+  );
+
+  // Negative filter check: In-person filter should NOT match this video-only provider
+  const e2eInPerson = await request(
+    patientUser,
+    "/v1/providers?mode=in-person",
+  );
+  assert.equal(e2eInPerson.status, 200);
+  assert.ok(
+    !e2eInPerson.data.providers.some((p) => p.id === e2eApplicant),
+    "Provider offering only video mode must not appear in in-person filter",
+  );
+
+  // Negative filter check: Non-matching specialty
+  const e2eNoMatch = await request(
+    patientUser,
+    "/v1/providers?specialty=Dermatology",
+  );
+  assert.equal(e2eNoMatch.status, 200);
+  assert.ok(!e2eNoMatch.data.providers.some((p) => p.id === e2eApplicant));
+
+  // 13. Day 2: Organization search, selection on submission, Needs info flow, and post-approval Doctor Home access
+  // Organization search
+  const orgsList = await request(patientUser, "/v1/organizations");
+  assert.equal(orgsList.status, 200);
+  assert.ok(orgsList.data.organizations.length >= 4);
+  assert.ok(
+    orgsList.data.organizations.some((o) => o.id === "org_bloom"),
+    "Seeded organizations must be listed",
+  );
+
+  const searchBloom = await request(patientUser, "/v1/organizations?search=bloom");
+  assert.equal(searchBloom.status, 200);
+  assert.equal(searchBloom.data.organizations.length, 1);
+  assert.equal(searchBloom.data.organizations[0].id, "org_bloom");
+
+  // First-time doctor onboarding with organization selection
+  const orgDoctor = "doc_onboarding_" + randomUUID().slice(0, 8);
+  const orgDocEvidence = (
+    await request(
+      orgDoctor,
+      "/v1/verification/documents?consent=1&name=doc.pdf",
+      "POST",
+      pdfContent,
+      "application/pdf",
+    )
+  ).data.id;
+
+  const orgDocSubmit = await request(orgDoctor, "/v1/verification/submit", "POST", {
+    kind: "Doctor",
+    revision: 0,
+    details: {
+      fullName: "Dr. Onboarding Clinician",
+      country: "India",
+      authority: "State Medical Council",
+      registrationNumber: "SMC-DAY2-001",
+      qualification: "MBBS",
+      consent: true,
+      organizationId: "org_bloom",
+      organizationName: "MedBloom Health Network",
+      specialty: "General Medicine",
+      languages: ["English"],
+      modes: ["in-person"],
+    },
+    documents: [orgDocEvidence],
+  });
+  assert.equal(orgDocSubmit.status, 200);
+  const orgAppId = orgDocSubmit.data.id;
+
+  // Verify review status tracking
+  let docStatus = (await request(orgDoctor, "/v1/verification")).data;
+  assert.equal(docStatus.applications[0].status, "Submitted");
+  assert.equal(docStatus.applications[0].details.organizationId, "org_bloom");
+  assert.equal(
+    docStatus.applications[0].details.organizationName,
+    "MedBloom Health Network",
+  );
+
+  // Reviewer requests more info
+  await request(reviewerUser, "/v1/verification/review", "POST", {
+    id: orgAppId,
+    revision: 1,
+    status: "Needs information",
+    reason: "Please attach certified registration document",
+  });
+
+  docStatus = (await request(orgDoctor, "/v1/verification")).data;
+  assert.equal(docStatus.applications[0].status, "Needs information");
+  assert.equal(
+    docStatus.applications[0].reason,
+    "Please attach certified registration document",
+  );
+
+  // Doctor responds to Needs Information by re-submitting with new evidence
+  const renewedDoc = (
+    await request(
+      orgDoctor,
+      "/v1/verification/documents?consent=1&name=renewed.pdf",
+      "POST",
+      pdfContent,
+      "application/pdf",
+    )
+  ).data.id;
+
+  const resubmitted = await request(orgDoctor, "/v1/verification/submit", "POST", {
+    kind: "Doctor",
+    revision: docStatus.applications[0].revision,
+    details: {
+      ...docStatus.applications[0].details,
+      qualification: "MBBS, MD",
+    },
+    documents: [renewedDoc],
+  });
+  assert.equal(resubmitted.status, 200);
+
+  // Reviewer approves the application
+  await request(reviewerUser, "/v1/verification/review", "POST", {
+    id: orgAppId,
+    revision: resubmitted.data.revision,
+    status: "Approved",
+    reason: "Valid registration confirmed",
+    identityReference: "AADHAAR-OK",
+    registrationReference: "REG-OK",
+    validUntil: futureDate,
+  });
+
+  // Verify post-approval Doctor Home access without assigned visit or workspace
+  const docSpaces = await request(orgDoctor, "/v1/spaces");
+  assert.equal(docSpaces.status, 200);
+  const docPersonalSpace = docSpaces.data.find((s) => s.role === "Doctor");
+  assert.ok(
+    docPersonalSpace,
+    "Approved doctor must have an unlocked Doctor Dashboard workspace",
+  );
+  assert.equal(docPersonalSpace.name, "Doctor Dashboard");
+
+  // Accessing Doctor Dashboard state succeeds without assigned visit requirement
+  const docHomeState = await request(
+    orgDoctor,
+    "/v1/state?space=" + docPersonalSpace.id,
+  );
+  assert.equal(
+    docHomeState.status,
+    200,
+    "Approved doctor must be able to open Doctor Home without an assigned visit",
+  );
+  assert.equal(docHomeState.data.state.session.role, "Doctor");
+  assert.equal(docHomeState.data.state.session.providerId, orgDoctor);
+
   console.log(
     "Passed: provider directory discovery, approved/unapproved/expired gates, zero data leakage, filters, pagination and input validation.",
   );

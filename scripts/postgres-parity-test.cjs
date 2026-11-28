@@ -3,7 +3,7 @@
  * BloomMed: PostgreSQL Schema & Adapter Parity Integration Test
  * 
  * Validates:
- * 1. PostgreSQL Schema Draft DDL (all 19 tables, indexes, constraints)
+ * 1. PostgreSQL Schema Draft DDL (all 23 tables, indexes, constraints)
  * 2. Synthetic Data Type Conversion (SQLite text/int -> PostgreSQL JSONB/BOOLEAN/TIMESTAMPTZ)
  * 3. Invariant Parity: Simultaneous slot booking conflict (409)
  * 4. Invariant Parity: Scoped exact retry matching & unrelated text non-collision
@@ -287,7 +287,9 @@ async function runParityTest() {
     "verification_documents", "verification_submission_documents",
     "verification_events", "consultation_calls",
     "consultation_call_participants", "consultation_call_slots",
-    "appointment_slots", "completed_operations"
+    "appointment_slots", "completed_operations",
+    "organizations", "workspace_organizations", "organization_admins",
+    "workspace_join_requests"
   ];
 
   for (const table of expectedTables) {
@@ -306,7 +308,7 @@ async function runParityTest() {
     schemaContent.includes("WHERE status IN ('Requested', 'Confirmed', 'In Progress')"),
     "Index must filter for active statuses."
   );
-  console.log("      All 19 tables, indexes, and constraints verified in DDL draft.");
+  console.log("      All 23 tables, indexes, and constraints verified in DDL draft.");
 
   // --- Step 2: Synthetic Data Type Conversion ---
   console.log("[2/5] Testing synthetic data type conversion (SQLite -> PostgreSQL)...");
