@@ -1,0 +1,64 @@
+name: PostgreSQL schema validation
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: bloom_med_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bloom_med_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Apply schema and check constraints
+        env:
+          PGHOST: localhost
+          PGPORT: ${{ job.services.postgres.ports[5432] }}
+          PGUSER: postgres
+          PGPASSWORD: ci-only
+          PGDATABASE: bloom_med_test
+        run: psql -X --set=validation_schema=bloom_validation --file=backend/postgres/validate.sql
+
+  validate-hosted-dev:
+    if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dev
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate the hosted development database if configured
+        env:
+          # Set DATABASE_URL in Settings > Environments > dev > Environment secrets.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PGCONNECT_TIMEOUT: 10
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Hosted validation skipped. Set DATABASE_URL in the dev environment." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          psql -X --dbname="$DATABASE_URL" --set="validation_schema=bloom_validation_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" --file=backend/postgres/validate.sql
