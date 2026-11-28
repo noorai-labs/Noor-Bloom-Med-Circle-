@@ -110,3 +110,11 @@ Local verification: `npm test`, `npm run typecheck`, `npm run lint`, `npm run ty
 ## Live reminder deployment — 25 October 2026
 
 User-approved migrations 0002_records.sql and 0003_reminders.sql were applied successfully to the existing bloom-med D1 database. The existing bloom-med-api Worker was deployed with the REMINDERS Durable Object binding; version d845a004-d0ac-43ef-a117-975dbd21db48. Health returned HTTP 200, and unauthenticated state/reminder requests returned HTTP 401. Wrangler confirms no pending migrations. Live authenticated reminder delivery has not yet been tested. Firebase FCM/EAS credentials, a configured client build and a physical-device push test remain necessary.
+
+## Hosted PostgreSQL development baseline
+
+The PostgreSQL workflow creates the isolated `bloom_med` schema in the database configured by the `dev` environment's `DATABASE_URL`. It first runs rollback-only validation, then commits the version 1 schema and seed organizations with `backend/postgres/apply.sql`.
+
+The migration ledger records the schema checksum. Rerunning the workflow with the same schema is safe. An existing untracked `bloom_med` schema or a changed baseline checksum stops the job. Keep the baseline immutable and add a numbered migration for future schema changes.
+
+The application Worker continues to use D1. The PostgreSQL baseline initializes schema and seed organizations only.
